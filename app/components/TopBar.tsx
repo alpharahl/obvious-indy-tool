@@ -34,14 +34,8 @@ export default function TopBar() {
       {/* Left: breadcrumb + status */}
       <div className="flex items-center gap-4">
         <Link href="/" className="text-xs uppercase tracking-widest" style={{ color: "var(--accent)" }}>
-          Obvious_Indy_Tool
+          Obvious Indy Tool
         </Link>
-        <span className="text-xs" style={{ color: "var(--muted-fg)" }}>
-          /
-        </span>
-        <span className="text-xs uppercase tracking-widest" style={{ color: "var(--muted-fg)" }}>
-          Dashboard
-        </span>
         <span
           className="ml-4 text-xs px-2 py-0.5 rounded border"
           style={{ borderColor: "var(--accent)", color: "var(--accent)" }}
@@ -50,24 +44,17 @@ export default function TopBar() {
         </span>
       </div>
 
-      {/* Center: tabs */}
+      {/* Center: tabs (disabled until built) */}
       <nav className="flex items-center gap-1">
-        {tabs.map((tab) => {
-          const active = pathname === tab.href;
-          return (
-            <Link
-              key={tab.href}
-              href={tab.href}
-              className="px-4 py-1 text-xs uppercase tracking-widest rounded transition-colors"
-              style={{
-                color: active ? "var(--accent)" : "var(--muted-fg)",
-                borderBottom: active ? "1px solid var(--accent)" : "1px solid transparent",
-              }}
-            >
-              {tab.label}
-            </Link>
-          );
-        })}
+        {tabs.map((tab) => (
+          <span
+            key={tab.href}
+            className="px-4 py-1 text-xs uppercase tracking-widest rounded cursor-not-allowed opacity-40"
+            style={{ color: "var(--muted-fg)" }}
+          >
+            {tab.label}
+          </span>
+        ))}
       </nav>
 
       {/* Right: datetime */}
