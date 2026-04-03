@@ -17,9 +17,13 @@ export default function UserMenuClient({ name }: { name: string | null }) {
 
   return (
     <div className="flex items-center gap-3">
-      <span className="text-xs" style={{ color: "var(--muted-fg)" }}>
+      <a
+        href="/account"
+        className="text-xs transition-opacity hover:opacity-70"
+        style={{ color: "var(--foreground)" }}
+      >
         {name}
-      </span>
+      </a>
       <button
         onClick={() => signOut({ callbackUrl: "/login" })}
         className="text-xs uppercase tracking-widest px-3 py-1 rounded border cursor-pointer transition-opacity hover:opacity-70"

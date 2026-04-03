@@ -1,5 +1,7 @@
 import NextAuth from "next-auth";
+import { cookies } from "next/headers";
 import { prisma } from "./lib/prisma";
+import { verifyLinkCookie } from "./lib/link-cookie";
 
 // EVE SSO v2 access tokens are JWTs. The character info lives in the payload.
 // Sub format: "CHARACTER:EVE:<characterId>"
@@ -82,11 +84,18 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       const scp = eveProfile.scp;
       const scopes = Array.isArray(scp) ? scp : scp ? scp.split(" ") : [];
 
+      // Check for a "link to existing account" cookie set by the add-character flow.
+      const cookieStore = await cookies();
+      const linkCookie = cookieStore.get("link_to_user")?.value ?? null;
+      const linkUserId = linkCookie ? verifyLinkCookie(linkCookie) : null;
+      if (linkCookie) cookieStore.delete("link_to_user");
+
       const existing = await prisma.character.findUnique({
         where: { characterId },
       });
 
       if (existing) {
+        // Character already registered — refresh its token and resume that account.
         await prisma.characterToken.upsert({
           where: { characterId: existing.id },
           update: { accessToken, refreshToken, expiresAt, scopes },
@@ -99,7 +108,28 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           },
         });
         user.id = existing.userId;
+      } else if (linkUserId) {
+        // Logged-in user adding a new character to their account.
+        const newChar = await prisma.character.create({
+          data: {
+            characterId,
+            characterName,
+            isMain: false,
+            userId: linkUserId,
+          },
+        });
+        await prisma.characterToken.create({
+          data: {
+            characterId: newChar.id,
+            accessToken,
+            refreshToken,
+            expiresAt,
+            scopes,
+          },
+        });
+        user.id = linkUserId;
       } else {
+        // Brand-new user — create an account for them.
         const newUser = await prisma.user.create({ data: {} });
         const newChar = await prisma.character.create({
           data: {

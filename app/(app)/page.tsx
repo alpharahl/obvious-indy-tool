@@ -57,25 +57,40 @@ async function fetchSlots() {
   const session = await auth();
   if (!session?.user?.id) return null;
 
-  const character = await prisma.character.findFirst({
-    where: { userId: session.user.id, isMain: true },
+  const characters = await prisma.character.findMany({
+    where: { userId: session.user.id },
   });
-  if (!character) return null;
+  if (!characters.length) return null;
 
-  const eveId = character.characterId;
-  const charId = character.id;
+  // Fetch jobs + skills for every character in parallel, skip any that fail.
+  const perChar = await Promise.all(
+    characters.map(async (char) => {
+      try {
+        const [jobs, skillsRes] = await Promise.all([
+          esiGet<EsiJob[]>(`/characters/${char.characterId}/industry/jobs/?include_completed=false`, char.id),
+          esiGet<EsiSkills>(`/characters/${char.characterId}/skills/`, char.id),
+        ]);
+        return { jobs, skills: skillsRes.skills };
+      } catch {
+        return null;
+      }
+    }),
+  );
 
-  const [jobs, skillsRes] = await Promise.all([
-    esiGet<EsiJob[]>(`/characters/${eveId}/industry/jobs/?include_completed=false`, charId),
-    esiGet<EsiSkills>(`/characters/${eveId}/skills/`, charId),
-  ]);
+  const zero = { active: 0, max: 0 };
+  const totals = { mfg: { ...zero }, research: { ...zero }, reactions: { ...zero } };
 
-  const skills = skillsRes.skills;
-  const mfg      = calcSlots(jobs, skills, SLOT_CONFIG.manufacturing.activityIds, SLOT_CONFIG.manufacturing.skillIds);
-  const research  = calcSlots(jobs, skills, SLOT_CONFIG.research.activityIds,     SLOT_CONFIG.research.skillIds);
-  const reactions = calcSlots(jobs, skills, SLOT_CONFIG.reactions.activityIds,    SLOT_CONFIG.reactions.skillIds);
+  for (const result of perChar) {
+    if (!result) continue;
+    const { jobs, skills } = result;
+    for (const [key, cfg] of Object.entries(SLOT_CONFIG) as [keyof typeof SLOT_CONFIG, typeof SLOT_CONFIG[keyof typeof SLOT_CONFIG]][]) {
+      const s = calcSlots(jobs, skills, cfg.activityIds, cfg.skillIds);
+      totals[key].active += s.active;
+      totals[key].max    += s.max;
+    }
+  }
 
-  return { mfg, research, reactions };
+  return totals;
 }
 
 // ── Page ────────────────────────────────────────────────────────────────────

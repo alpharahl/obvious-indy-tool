@@ -33,9 +33,9 @@ export default function TopBar() {
     >
       {/* Left: breadcrumb + status */}
       <div className="flex items-center gap-4">
-        <span className="text-xs uppercase tracking-widest" style={{ color: "var(--accent)" }}>
+        <Link href="/" className="text-xs uppercase tracking-widest" style={{ color: "var(--accent)" }}>
           Obvious_Indy_Tool
-        </span>
+        </Link>
         <span className="text-xs" style={{ color: "var(--muted-fg)" }}>
           /
         </span>
