@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist_Mono } from "next/font/google";
 import "./globals.css";
+import SessionProvider from "./components/SessionProvider";
 
 const geistMono = Geist_Mono({
   variable: "--font-geist-mono",
@@ -19,7 +20,9 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className={`${geistMono.variable} h-full`}>
-      <body className="min-h-full flex">{children}</body>
+      <body className="min-h-full flex">
+          <SessionProvider>{children}</SessionProvider>
+        </body>
     </html>
   );
 }
