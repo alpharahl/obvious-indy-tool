@@ -97,6 +97,23 @@ export default function Sidebar() {
           );
         })}
       </nav>
+
+      {/* Admin — pinned to bottom */}
+      <div className="flex flex-col items-center pb-4">
+        <Link
+          href="/admin"
+          title="Admin"
+          className="flex items-center justify-center w-10 h-10 rounded transition-colors"
+          style={{
+            color: pathname === "/admin" ? "var(--accent)" : "var(--muted-fg)",
+            background: pathname === "/admin" ? "rgba(0,229,192,0.08)" : "transparent",
+          }}
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+          </svg>
+        </Link>
+      </div>
     </aside>
   );
 }
