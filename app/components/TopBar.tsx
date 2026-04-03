@@ -34,7 +34,7 @@ export default function TopBar() {
       {/* Left: breadcrumb + status */}
       <div className="flex items-center gap-4">
         <span className="text-xs uppercase tracking-widest" style={{ color: "var(--accent)" }}>
-          Obsidian_Command
+          Obvious_Indy_Tool
         </span>
         <span className="text-xs" style={{ color: "var(--muted-fg)" }}>
           /

@@ -8,7 +8,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Obsidian Command",
+  title: "Obvious Indy Tool",
   description: "EVE Online industry logistics and crafting management",
 };
 
