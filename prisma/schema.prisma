@@ -1,0 +1,262 @@
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client"
+  output   = "../app/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ============================================================
+// AUTH / USERS
+// A User is an app account. One user can link many EVE
+// characters (main + alts). Auth is handled via EVE SSO OAuth.
+// ============================================================
+
+model User {
+  id         String      @id @default(cuid())
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+  characters Character[]
+}
+
+/// One EVE character, linked to a User account via EVE SSO.
+model Character {
+  id            String          @id @default(cuid())
+  characterId   Int             @unique  // EVE character ID
+  characterName String
+  corporationId Int?
+  allianceId    Int?
+  isMain        Boolean         @default(false)
+  userId        String
+  user          User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token         CharacterToken?
+
+  // Live ESI data
+  industryJobs    IndustryJob[]
+  ownedBlueprints OwnedBlueprint[]
+  assets          Asset[]
+  marketOrders    MarketOrder[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+/// EVE SSO OAuth tokens for a character. Rotated on each refresh.
+model CharacterToken {
+  id           String    @id @default(cuid())
+  characterId  String    @unique
+  character    Character @relation(fields: [characterId], references: [id], onDelete: Cascade)
+  accessToken  String
+  refreshToken String
+  expiresAt    DateTime
+  scopes       String[]  // granted ESI scopes
+  updatedAt    DateTime  @updatedAt
+}
+
+// ============================================================
+// SDE — STATIC GAME DATA
+// Imported from the EVE Static Data Export. Never user-modified.
+// IDs match EVE's own IDs so ESI responses join cleanly.
+// ============================================================
+
+/// EVE item type (ship, module, ore, blueprint, etc.)
+model SdeType {
+  id          Int      @id  // typeID
+  name        String
+  description String?
+  groupId     Int
+  group       SdeGroup @relation(fields: [groupId], references: [id])
+  volume      Float?
+  mass        Float?
+  published   Boolean  @default(true)
+
+  blueprintMaterials BlueprintMaterial[]
+  blueprintProducts  BlueprintProduct[]
+  assets             Asset[]
+  marketOrders       MarketOrder[]
+  ownedBlueprints    OwnedBlueprint[]
+}
+
+model SdeGroup {
+  id         Int         @id  // groupID
+  name       String
+  categoryId Int
+  category   SdeCategory @relation(fields: [categoryId], references: [id])
+  types      SdeType[]
+}
+
+model SdeCategory {
+  id     Int        @id  // categoryID
+  name   String
+  groups SdeGroup[]
+}
+
+/// Blueprint definition from SDE. One blueprint can have multiple
+/// activities (manufacturing, copying, invention, etc.)
+model Blueprint {
+  typeId             Int                 @id  // blueprintTypeID
+  maxProductionLimit Int
+  activities         BlueprintActivity[]
+}
+
+model BlueprintActivity {
+  id          Int             @id @default(autoincrement())
+  blueprintId Int
+  blueprint   Blueprint       @relation(fields: [blueprintId], references: [typeId])
+  activity    ActivityType
+  time        Int             // base job duration in seconds
+
+  materials BlueprintMaterial[]
+  products  BlueprintProduct[]
+  skills    BlueprintSkill[]
+
+  @@unique([blueprintId, activity])
+}
+
+enum ActivityType {
+  MANUFACTURING
+  RESEARCH_TIME
+  RESEARCH_MATERIAL
+  COPYING
+  INVENTION
+  REACTION
+}
+
+model BlueprintMaterial {
+  id                  Int               @id @default(autoincrement())
+  blueprintActivityId Int
+  blueprintActivity   BlueprintActivity @relation(fields: [blueprintActivityId], references: [id])
+  typeId              Int
+  type                SdeType           @relation(fields: [typeId], references: [id])
+  quantity            Int
+
+  @@unique([blueprintActivityId, typeId])
+}
+
+model BlueprintProduct {
+  id                  Int               @id @default(autoincrement())
+  blueprintActivityId Int
+  blueprintActivity   BlueprintActivity @relation(fields: [blueprintActivityId], references: [id])
+  typeId              Int
+  type                SdeType           @relation(fields: [typeId], references: [id])
+  quantity            Int
+  probability         Float?            // invention chance, null = 1.0
+
+  @@unique([blueprintActivityId, typeId])
+}
+
+model BlueprintSkill {
+  id                  Int               @id @default(autoincrement())
+  blueprintActivityId Int
+  blueprintActivity   BlueprintActivity @relation(fields: [blueprintActivityId], references: [id])
+  skillTypeId         Int               // references SdeType (skill items)
+  level               Int
+
+  @@unique([blueprintActivityId, skillTypeId])
+}
+
+model SdeRegion {
+  id           Int              @id  // regionID
+  name         String
+  solarSystems SdeSolarSystem[]
+}
+
+model SdeSolarSystem {
+  id        Int        @id  // solarSystemID
+  name      String
+  regionId  Int
+  region    SdeRegion  @relation(fields: [regionId], references: [id])
+  security  Float
+  stations  SdeStation[]
+}
+
+model SdeStation {
+  id            Int            @id  // stationID
+  name          String
+  solarSystemId Int
+  solarSystem   SdeSolarSystem @relation(fields: [solarSystemId], references: [id])
+}
+
+// ============================================================
+// LIVE DATA — synced from ESI per character
+// All live tables track syncedAt so stale data can be detected.
+// ============================================================
+
+/// Industry jobs from /characters/{id}/industry/jobs/
+model IndustryJob {
+  jobId           Int         @id  // job_id from ESI
+  characterId     String
+  character       Character   @relation(fields: [characterId], references: [id], onDelete: Cascade)
+  activityId      Int         // 1=mfg, 3=te, 4=me, 5=copy, 8=invention, 11=reaction
+  blueprintTypeId Int
+  outputTypeId    Int
+  runs            Int
+  status          JobStatus
+  startDate       DateTime
+  endDate         DateTime
+  completedDate   DateTime?
+  facilityId      BigInt      // structure or station
+  cost            Float?
+  probability     Float?
+  syncedAt        DateTime    @default(now()) @updatedAt
+}
+
+enum JobStatus {
+  ACTIVE
+  PAUSED
+  READY
+  DELIVERED
+  CANCELLED
+  REVERTED
+}
+
+/// Blueprint copies/originals in a character's possession
+/// from /characters/{id}/blueprints/
+model OwnedBlueprint {
+  id                 String    @id @default(cuid())
+  characterId        String
+  character          Character @relation(fields: [characterId], references: [id], onDelete: Cascade)
+  itemId             BigInt    // unique item instance ID from ESI
+  typeId             Int
+  type               SdeType   @relation(fields: [typeId], references: [id])
+  locationId         BigInt
+  runs               Int       // -1 = BPO (original), >0 = BPC runs remaining
+  materialEfficiency Int       // 0–10
+  timeEfficiency     Int       // 0–20
+  syncedAt           DateTime  @default(now()) @updatedAt
+
+  @@unique([characterId, itemId])
+}
+
+/// Character assets from /characters/{id}/assets/
+model Asset {
+  itemId      BigInt    @id  // unique item instance ID
+  characterId String
+  character   Character @relation(fields: [characterId], references: [id], onDelete: Cascade)
+  typeId      Int
+  type        SdeType   @relation(fields: [typeId], references: [id])
+  locationId  BigInt
+  quantity    Int
+  isSingleton Boolean
+  syncedAt    DateTime  @default(now()) @updatedAt
+}
+
+/// Active market orders from /characters/{id}/orders/
+model MarketOrder {
+  orderId      BigInt    @id  // order_id from ESI
+  characterId  String
+  character    Character @relation(fields: [characterId], references: [id], onDelete: Cascade)
+  typeId       Int
+  type         SdeType   @relation(fields: [typeId], references: [id])
+  locationId   BigInt
+  volumeTotal  Int
+  volumeRemain Int
+  price        Float
+  isBuyOrder   Boolean
+  issued       DateTime
+  duration     Int       // days
+  syncedAt     DateTime  @default(now()) @updatedAt
+}
