@@ -34,6 +34,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           scope: [
             "esi-industry.read_character_jobs.v1",
             "esi-characters.read_blueprints.v1",
+            "esi-skills.read_skills.v1",
             "esi-assets.read_assets.v1",
             "esi-markets.read_character_orders.v1",
             "esi-wallet.read_character_wallet.v1",
