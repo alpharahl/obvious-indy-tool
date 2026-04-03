@@ -14,6 +14,13 @@ interface EsiAsset {
   is_singleton: boolean;
 }
 
+interface EsiStructure {
+  name: string;
+  owner_id: number;
+  solar_system_id: number;
+  type_id?: number;
+}
+
 export async function syncAssets() {
   const session = await auth();
   if (!session?.user?.id) throw new Error("Not authenticated");
@@ -61,6 +68,50 @@ export async function syncAssets() {
           skipDuplicates: true,
         }),
       ]);
+
+      // Resolve player-owned structure names for any locationIds > 1 trillion.
+      const structureIds = [
+        ...new Set(
+          validAssets
+            .map((a) => BigInt(a.location_id))
+            .filter((id) => id > 1_000_000_000_000n)
+        ),
+      ];
+
+      // Only resolve structures we haven't cached yet.
+      const cached = await prisma.structure.findMany({
+        where: { id: { in: structureIds } },
+        select: { id: true },
+      });
+      const cachedIds = new Set(cached.map((s) => s.id));
+      const newStructureIds = structureIds.filter((id) => !cachedIds.has(id));
+
+      for (const structureId of newStructureIds) {
+        try {
+          const info = await esiGet<EsiStructure>(
+            `/universe/structures/${structureId}/`,
+            char.id,
+          );
+          await prisma.structure.upsert({
+            where: { id: structureId },
+            update: {
+              name: info.name,
+              solarSystemId: info.solar_system_id,
+              ownerId: info.owner_id,
+              typeId: info.type_id ?? null,
+            },
+            create: {
+              id: structureId,
+              name: info.name,
+              solarSystemId: info.solar_system_id,
+              ownerId: info.owner_id,
+              typeId: info.type_id ?? null,
+            },
+          });
+        } catch {
+          // Character may lack docking access — skip silently.
+        }
+      }
     }),
   );
 

@@ -3,6 +3,7 @@ export const dynamic = "force-dynamic";
 import { redirect } from "next/navigation";
 import { auth } from "../../../auth";
 import { prisma } from "../../../lib/prisma";
+import { esiGet } from "../../../lib/esi";
 import AddCharacterButton from "../../components/AddCharacterButton";
 import SyncAssetsButton from "../../components/SyncAssetsButton";
 import AssetList, { type AssetRow } from "../../components/AssetList";
@@ -33,8 +34,11 @@ export default async function AccountPage() {
   const solarSystemIds = locationIds
     .filter((id) => id >= 30_000_000n && id <= 33_000_000n)
     .map((id) => Number(id));
+  const playerStructureIds = locationIds.filter(
+    (id) => id > 1_000_000_000_000n
+  );
 
-  const [stations, solarSystems] = await Promise.all([
+  const [stations, solarSystems, structures] = await Promise.all([
     npcStationIds.length
       ? prisma.sdeStation.findMany({
           where: { id: { in: npcStationIds } },
@@ -47,10 +51,71 @@ export default async function AccountPage() {
           include: { region: true },
         })
       : Promise.resolve([]),
+    playerStructureIds.length
+      ? prisma.structure.findMany({
+          where: { id: { in: playerStructureIds } },
+          include: { solarSystem: { include: { region: true } } },
+        })
+      : Promise.resolve([]),
   ]);
 
   const stationMap = new Map(stations.map((s) => [BigInt(s.id), s]));
   const solarSystemMap = new Map(solarSystems.map((s) => [BigInt(s.id), s]));
+  const structureMap = new Map(structures.map((s) => [s.id, s]));
+
+  // Resolve any player structures not yet in the cache via ESI.
+  const unresolvedIds = playerStructureIds.filter((id) => !structureMap.has(id));
+  if (unresolvedIds.length > 0) {
+    // Use the first character with a token to query ESI.
+    const charWithToken = await prisma.character.findFirst({
+      where: { userId: session.user.id, token: { isNot: null } },
+      select: { id: true },
+    });
+
+    if (charWithToken) {
+      interface EsiStructure {
+        name: string;
+        owner_id: number;
+        solar_system_id: number;
+        type_id?: number;
+      }
+
+      const resolved = await Promise.all(
+        unresolvedIds.map(async (structureId) => {
+          try {
+            const info = await esiGet<EsiStructure>(
+              `/universe/structures/${structureId}/`,
+              charWithToken.id,
+            );
+            const saved = await prisma.structure.upsert({
+              where: { id: structureId },
+              update: {
+                name: info.name,
+                solarSystemId: info.solar_system_id,
+                ownerId: info.owner_id,
+                typeId: info.type_id ?? null,
+              },
+              create: {
+                id: structureId,
+                name: info.name,
+                solarSystemId: info.solar_system_id,
+                ownerId: info.owner_id,
+                typeId: info.type_id ?? null,
+              },
+              include: { solarSystem: { include: { region: true } } },
+            });
+            return saved;
+          } catch {
+            return null; // No docking access or ESI error — skip
+          }
+        }),
+      );
+
+      for (const s of resolved) {
+        if (s) structureMap.set(s.id, s);
+      }
+    }
+  }
 
   // BigInt can't cross the server→client boundary directly — serialise to string.
   const assets: AssetRow[] = rawAssets.map((a) => {
@@ -64,11 +129,18 @@ export default async function AccountPage() {
       solarSystemName = station.solarSystem.name;
       regionName = station.solarSystem.region.name;
     } else {
-      const sys = solarSystemMap.get(a.locationId);
-      if (sys) {
-        locationName = sys.name;
-        solarSystemName = sys.name;
-        regionName = sys.region.name;
+      const structure = structureMap.get(a.locationId);
+      if (structure) {
+        locationName = structure.name;
+        solarSystemName = structure.solarSystem.name;
+        regionName = structure.solarSystem.region.name;
+      } else {
+        const sys = solarSystemMap.get(a.locationId);
+        if (sys) {
+          locationName = sys.name;
+          solarSystemName = sys.name;
+          regionName = sys.region.name;
+        }
       }
     }
 

@@ -171,6 +171,7 @@ model SdeSolarSystem {
   region    SdeRegion  @relation(fields: [regionId], references: [id])
   security  Float
   stations  SdeStation[]
+  structures Structure[]
 }
 
 model SdeStation {
@@ -229,6 +230,17 @@ model OwnedBlueprint {
   syncedAt           DateTime  @default(now()) @updatedAt
 
   @@unique([characterId, itemId])
+}
+
+/// Cached player-owned structure info from ESI /universe/structures/{id}/
+model Structure {
+  id            BigInt         @id  // structure_id from ESI
+  name          String
+  solarSystemId Int
+  solarSystem   SdeSolarSystem @relation(fields: [solarSystemId], references: [id])
+  ownerId       Int            // corporation that owns the structure
+  typeId        Int?           // structure type (Astrahus, Raitaru, etc.)
+  updatedAt     DateTime       @updatedAt
 }
 
 /// Character assets from /characters/{id}/assets/

@@ -40,6 +40,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
             "esi-assets.read_assets.v1",
             "esi-markets.read_character_orders.v1",
             "esi-wallet.read_character_wallet.v1",
+            "esi-universe.read_structures.v1",
           ].join(" "),
         },
       },
