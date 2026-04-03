@@ -1,5 +1,6 @@
 export const dynamic = "force-dynamic";
 
+import { unstable_cache } from "next/cache";
 import { auth } from "../../auth";
 import { prisma } from "../../lib/prisma";
 import { esiGet } from "../../lib/esi";
@@ -55,44 +56,53 @@ function calcSlots(
 
 // ── Data fetching ───────────────────────────────────────────────────────────
 
+// Cached per userId — revalidates every 5 minutes.
+// auth() / cookies() must NOT be called inside unstable_cache, so userId is
+// read outside and passed as an argument (which becomes part of the cache key).
+const getSlotsForUser = unstable_cache(
+  async (userId: string) => {
+    const characters = await prisma.character.findMany({
+      where: { userId },
+    });
+    if (!characters.length) return null;
+
+    const perChar = await Promise.all(
+      characters.map(async (char) => {
+        try {
+          const [jobs, skillsRes] = await Promise.all([
+            esiGet<EsiJob[]>(`/characters/${char.characterId}/industry/jobs/?include_completed=false`, char.id),
+            esiGet<EsiSkills>(`/characters/${char.characterId}/skills/`, char.id),
+          ]);
+          return { jobs, skills: skillsRes.skills };
+        } catch {
+          return null;
+        }
+      }),
+    );
+
+    const zero = { active: 0, max: 0 };
+    const totals = { mfg: { ...zero }, research: { ...zero }, reactions: { ...zero } };
+
+    for (const result of perChar) {
+      if (!result) continue;
+      const { jobs, skills } = result;
+      for (const [key, cfg] of Object.entries(SLOT_CONFIG) as [keyof typeof SLOT_CONFIG, typeof SLOT_CONFIG[keyof typeof SLOT_CONFIG]][]) {
+        const s = calcSlots(jobs, skills, cfg.activityIds, cfg.skillIds);
+        totals[key].active += s.active;
+        totals[key].max    += s.max;
+      }
+    }
+
+    return totals;
+  },
+  ["slots"],
+  { revalidate: 300 },
+);
+
 async function fetchSlots() {
   const session = await auth();
   if (!session?.user?.id) return null;
-
-  const characters = await prisma.character.findMany({
-    where: { userId: session.user.id },
-  });
-  if (!characters.length) return null;
-
-  // Fetch jobs + skills for every character in parallel, skip any that fail.
-  const perChar = await Promise.all(
-    characters.map(async (char) => {
-      try {
-        const [jobs, skillsRes] = await Promise.all([
-          esiGet<EsiJob[]>(`/characters/${char.characterId}/industry/jobs/?include_completed=false`, char.id),
-          esiGet<EsiSkills>(`/characters/${char.characterId}/skills/`, char.id),
-        ]);
-        return { jobs, skills: skillsRes.skills };
-      } catch {
-        return null;
-      }
-    }),
-  );
-
-  const zero = { active: 0, max: 0 };
-  const totals = { mfg: { ...zero }, research: { ...zero }, reactions: { ...zero } };
-
-  for (const result of perChar) {
-    if (!result) continue;
-    const { jobs, skills } = result;
-    for (const [key, cfg] of Object.entries(SLOT_CONFIG) as [keyof typeof SLOT_CONFIG, typeof SLOT_CONFIG[keyof typeof SLOT_CONFIG]][]) {
-      const s = calcSlots(jobs, skills, cfg.activityIds, cfg.skillIds);
-      totals[key].active += s.active;
-      totals[key].max    += s.max;
-    }
-  }
-
-  return totals;
+  return getSlotsForUser(session.user.id);
 }
 
 // ── Page ────────────────────────────────────────────────────────────────────
