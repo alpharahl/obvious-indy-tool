@@ -50,7 +50,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       // The url satisfies NextAuth's config validator; request() takes precedence.
       userinfo: {
         url: "https://login.eveonline.com/v2/oauth/verify",
-        async request({ tokens }) {
+        async request({ tokens }: { tokens: { access_token?: string } }) {
           return decodeEveToken(tokens.access_token!);
         },
       },
