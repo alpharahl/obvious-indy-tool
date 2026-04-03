@@ -1,3 +1,5 @@
+export const dynamic = "force-dynamic";
+
 import { auth } from "../../auth";
 import { prisma } from "../../lib/prisma";
 import { esiGet } from "../../lib/esi";
@@ -28,9 +30,9 @@ interface EsiSkills {
 // Active slots = jobs in the given activity bucket with status active/paused
 
 const SLOT_CONFIG = {
-  manufacturing: { activityIds: [1],          skillIds: [3387, 24625] as const },
-  research:      { activityIds: [3, 4, 5, 8], skillIds: [3406, 24624] as const },
-  reactions:     { activityIds: [11],         skillIds: [45748, 45749] as const },
+  mfg:       { activityIds: [1],          skillIds: [3387, 24625] as const },
+  research:  { activityIds: [3, 4, 5, 8], skillIds: [3406, 24624] as const },
+  reactions: { activityIds: [11],         skillIds: [45748, 45749] as const },
 } as const;
 
 function calcSlots(
