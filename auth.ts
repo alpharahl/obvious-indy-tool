@@ -1,12 +1,25 @@
 import NextAuth from "next-auth";
 import { prisma } from "./lib/prisma";
 
-interface EveProfile {
-  CharacterID: number;
-  CharacterName: string;
-  CharacterOwnerHash: string;
-  Scopes: string;
-  ExpiresOn: string;
+// EVE SSO v2 access tokens are JWTs. The character info lives in the payload.
+// Sub format: "CHARACTER:EVE:<characterId>"
+interface EveTokenClaims {
+  sub: string;               // "CHARACTER:EVE:12345"
+  name: string;              // character name
+  owner: string;             // character owner hash
+  exp: number;
+  iss: string;
+  jti?: string;
+  scp?: string | string[];   // granted scopes — array for multiple, string for one
+}
+
+function decodeEveToken(accessToken: string): EveTokenClaims {
+  const payload = accessToken.split(".")[1];
+  return JSON.parse(Buffer.from(payload, "base64url").toString());
+}
+
+function eveCharacterId(sub: string): number {
+  return parseInt(sub.split(":")[2], 10);
 }
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
@@ -29,11 +42,19 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       },
       token: "https://login.eveonline.com/v2/oauth/token",
       checks: ["pkce", "state"],
-      userinfo: "https://esi.evetech.net/verify/",
-      profile(profile: EveProfile) {
+      // esi.evetech.net/verify/ now 301-redirects and oauth4webapi doesn't follow
+      // it. Decode the access token JWT directly instead — it contains all claims.
+      // The url satisfies NextAuth's config validator; request() takes precedence.
+      userinfo: {
+        url: "https://login.eveonline.com/v2/oauth/verify",
+        async request({ tokens }) {
+          return decodeEveToken(tokens.access_token!);
+        },
+      },
+      profile(profile: EveTokenClaims) {
         return {
-          id: String(profile.CharacterID),
-          name: profile.CharacterName,
+          id: String(eveCharacterId(profile.sub)),
+          name: profile.name,
           email: null,
         };
       },
@@ -48,16 +69,17 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     async signIn({ user, account, profile }) {
       if (!account || account.provider !== "eve" || !profile) return false;
 
-      const eveProfile = profile as unknown as EveProfile;
-      const characterId = eveProfile.CharacterID;
-      const characterName = eveProfile.CharacterName;
+      const eveProfile = profile as unknown as EveTokenClaims;
+      const characterId = eveCharacterId(eveProfile.sub);
+      const characterName = eveProfile.name;
 
       const accessToken = account.access_token!;
       const refreshToken = account.refresh_token!;
       const expiresAt = new Date(
         Date.now() + ((account.expires_in as number | undefined) ?? 1200) * 1000
       );
-      const scopes = eveProfile.Scopes ? eveProfile.Scopes.split(" ") : [];
+      const scp = eveProfile.scp;
+      const scopes = Array.isArray(scp) ? scp : scp ? scp.split(" ") : [];
 
       const existing = await prisma.character.findUnique({
         where: { characterId },
@@ -75,7 +97,6 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
             scopes,
           },
         });
-        // Pass our internal userId back through the user object
         user.id = existing.userId;
       } else {
         const newUser = await prisma.user.create({ data: {} });
