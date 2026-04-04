@@ -11,6 +11,9 @@ import PlanDetailBody, {
   type ShoppingEntry,
 } from "../../../components/PlanDetailBody";
 
+// How many material levels deep to support (plan item → L1 → L2 → … → L_MAX_DEPTH)
+const MAX_MATERIAL_DEPTH = 4;
+
 export default async function PlanDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const session = await auth();
@@ -27,13 +30,34 @@ export default async function PlanDetailPage({ params }: { params: Promise<{ id:
   });
   if (!plan) notFound();
 
-  // ── Level-1: blueprint activities that manufacture each plan item ──────────
   const productTypeIds = plan.items.map((i) => i.typeId);
 
+  // ── Blueprint data map ────────────────────────────────────────────────────
+  // Maps a product typeId → { outputQty, materials[] }
+  // Populated iteratively for up to MAX_MATERIAL_DEPTH levels.
+  const bpDataByTypeId = new Map<
+    number,
+    { outputQty: number; materials: Array<{ typeId: number; typeName: string; quantity: number }> }
+  >();
+
+  // We also need baseTime / blueprintTypeId for plan items (for est. time display, not used here
+  // but kept in bpInfoByProductTypeId for potential future use).
+  const bpInfoByProductTypeId = new Map<
+    number,
+    { blueprintTypeId: number; baseTime: number; outputQty: number }
+  >();
+
+  // Type name lookup accumulated across all fetches
+  const typeNameMap = new Map<number, string>();
+  for (const item of plan.items) {
+    typeNameMap.set(item.typeId, item.type.name);
+  }
+
+  // ── Level 0 → 1: fetch blueprints/schematics that produce each plan item ──
   const mfgActivities = productTypeIds.length
     ? await prisma.blueprintActivity.findMany({
         where: {
-          activity: "MANUFACTURING",
+          activity: { in: ["MANUFACTURING", "REACTION"] },
           products: { some: { typeId: { in: productTypeIds } } },
         },
         include: {
@@ -43,28 +67,18 @@ export default async function PlanDetailPage({ params }: { params: Promise<{ id:
       })
     : [];
 
-  // productTypeId → { blueprintTypeId, baseTime, outputQty, activityId }
-  const bpInfoByProductTypeId = new Map<
-    number,
-    { blueprintTypeId: number; baseTime: number; outputQty: number; activityId: number }
-  >();
-  const materialsByActivityId = new Map<
-    number,
-    Array<{ typeId: number; typeName: string; quantity: number }>
-  >();
-
   for (const act of mfgActivities) {
-    materialsByActivityId.set(
-      act.id,
-      act.materials.map((m) => ({ typeId: m.typeId, typeName: m.type.name, quantity: m.quantity })),
-    );
     for (const prod of act.products) {
       bpInfoByProductTypeId.set(prod.typeId, {
         blueprintTypeId: act.blueprintId,
         baseTime: act.time,
         outputQty: prod.quantity,
-        activityId: act.id,
       });
+      const mats = act.materials.map((m) => {
+        typeNameMap.set(m.typeId, m.type.name);
+        return { typeId: m.typeId, typeName: m.type.name, quantity: m.quantity };
+      });
+      bpDataByTypeId.set(prod.typeId, { outputQty: prod.quantity, materials: mats });
     }
   }
 
@@ -72,39 +86,86 @@ export default async function PlanDetailPage({ params }: { params: Promise<{ id:
   const decisions = await prisma.buildPlanDecision.findMany({ where: { planId: plan.id } });
   const decisionMap = new Map(decisions.map((d) => [d.typeId, d.decision as "buy" | "build"]));
 
-  // ── Level-2: sub-blueprints for materials marked "build" ──────────────────
-  const allLevel1MatTypeIds = [
-    ...new Set([...materialsByActivityId.values()].flatMap((mats) => mats.map((m) => m.typeId))),
+  // ── Levels 2 → MAX_MATERIAL_DEPTH: iterative fetch ───────────────────────
+  // We fetch blueprint data for ALL materials at each level so we know canBuild,
+  // not just the ones currently marked "build".  fetchedTypeIds prevents re-querying.
+  const fetchedTypeIds = new Set<number>(bpDataByTypeId.keys());
+
+  // Initial frontier = all L1 material typeIds
+  let frontier = [
+    ...new Set(
+      plan.items.flatMap((item) => bpDataByTypeId.get(item.typeId)?.materials.map((m) => m.typeId) ?? []),
+    ),
   ];
-  const buildDecisionTypeIds = allLevel1MatTypeIds.filter(
-    (tid) => decisionMap.get(tid) === "build",
-  );
 
-  const subMaterialsByTypeId = new Map<
-    number,
-    Array<{ typeId: number; typeName: string; quantity: number }>
-  >();
-  const subBpOutputQtyByTypeId = new Map<number, number>();
+  for (let depth = 2; depth <= MAX_MATERIAL_DEPTH; depth++) {
+    const toFetch = frontier.filter((tid) => !fetchedTypeIds.has(tid));
+    if (!toFetch.length) break;
 
-  if (buildDecisionTypeIds.length) {
-    const subActivities = await prisma.blueprintActivity.findMany({
+    toFetch.forEach((tid) => fetchedTypeIds.add(tid));
+
+    const subActs = await prisma.blueprintActivity.findMany({
       where: {
-        activity: "MANUFACTURING",
-        products: { some: { typeId: { in: buildDecisionTypeIds } } },
+        activity: { in: ["MANUFACTURING", "REACTION"] },
+        products: { some: { typeId: { in: toFetch } } },
       },
       include: {
-        products: { where: { typeId: { in: buildDecisionTypeIds } } },
+        products: { where: { typeId: { in: toFetch } } },
         materials: { include: { type: { select: { name: true } } } },
       },
     });
 
-    for (const act of subActivities) {
+    const nextFrontier: number[] = [];
+    for (const act of subActs) {
       for (const prod of act.products) {
-        subBpOutputQtyByTypeId.set(prod.typeId, prod.quantity);
-        subMaterialsByTypeId.set(
-          prod.typeId,
-          act.materials.map((m) => ({ typeId: m.typeId, typeName: m.type.name, quantity: m.quantity })),
-        );
+        const mats = act.materials.map((m) => {
+          typeNameMap.set(m.typeId, m.type.name);
+          return { typeId: m.typeId, typeName: m.type.name, quantity: m.quantity };
+        });
+        bpDataByTypeId.set(prod.typeId, { outputQty: prod.quantity, materials: mats });
+        nextFrontier.push(...act.materials.map((m) => m.typeId));
+      }
+    }
+    frontier = [...new Set(nextFrontier)];
+  }
+
+  // ── Recursive material tree builder ──────────────────────────────────────
+  function buildMaterials(typeId: number, totalQty: number, depth: number): Material {
+    const decision = (decisionMap.get(typeId) ?? "buy") as "buy" | "build" | "gather";
+    const bpData = bpDataByTypeId.get(typeId);
+    const canBuild = !!bpData;
+    const typeName = typeNameMap.get(typeId) ?? String(typeId);
+
+    let subMaterials: Material[] = [];
+    if (decision === "build" && bpData && depth < MAX_MATERIAL_DEPTH) {
+      const runsNeeded = totalQty > 0 ? Math.ceil(totalQty / bpData.outputQty) : 0;
+      subMaterials = bpData.materials.map((mat) =>
+        buildMaterials(mat.typeId, mat.quantity * runsNeeded, depth + 1),
+      );
+    }
+
+    return { typeId, typeName, quantity: totalQty, decision, canBuild, subMaterials };
+  }
+
+  // ── Recursive item collector ─────────────────────────────────────────────
+  // Recurses into sub-materials when decision="build" AND sub-materials exist.
+  // Falls through to the appropriate map otherwise:
+  //   "gather"  → gatherMap  (base resources: mine, do PI, etc.)
+  //   anything else ("buy", no blueprint, depth limit) → buyMap
+  function collectItems(
+    materials: Material[],
+    buyMap: Map<number, { typeName: string; quantity: number }>,
+    gatherMap: Map<number, { typeName: string; quantity: number }>,
+  ) {
+    for (const mat of materials) {
+      if (mat.decision === "build" && mat.subMaterials.length > 0) {
+        collectItems(mat.subMaterials, buyMap, gatherMap);
+      } else if (mat.decision === "gather") {
+        const prev = gatherMap.get(mat.typeId);
+        gatherMap.set(mat.typeId, { typeName: mat.typeName, quantity: (prev?.quantity ?? 0) + mat.quantity });
+      } else {
+        const prev = buyMap.get(mat.typeId);
+        buyMap.set(mat.typeId, { typeName: mat.typeName, quantity: (prev?.quantity ?? 0) + mat.quantity });
       }
     }
   }
@@ -114,29 +175,11 @@ export default async function PlanDetailPage({ params }: { params: Promise<{ id:
     const bpInfo = bpInfoByProductTypeId.get(item.typeId);
     const remaining = Math.max(0, item.quantity - item.completedQuantity);
     const runsNeeded = bpInfo && remaining > 0 ? Math.ceil(remaining / bpInfo.outputQty) : 0;
-    const rawMaterials = bpInfo ? (materialsByActivityId.get(bpInfo.activityId) ?? []) : [];
+    const rawMaterials = bpInfo ? (bpDataByTypeId.get(item.typeId)?.materials ?? []) : [];
 
-    const materials: Material[] = rawMaterials.map((mat) => {
-      const decision = decisionMap.get(mat.typeId) ?? "buy";
-      const totalQty = mat.quantity * runsNeeded;
-      const subRawMats = subMaterialsByTypeId.get(mat.typeId) ?? [];
-      const subOutputQty = subBpOutputQtyByTypeId.get(mat.typeId) ?? 1;
-      const subRunsNeeded =
-        subRawMats.length > 0 && totalQty > 0 ? Math.ceil(totalQty / subOutputQty) : 0;
-
-      return {
-        typeId: mat.typeId,
-        typeName: mat.typeName,
-        quantity: totalQty,
-        decision,
-        canBuild: subRawMats.length > 0,
-        subMaterials: subRawMats.map((sub) => ({
-          typeId: sub.typeId,
-          typeName: sub.typeName,
-          quantity: sub.quantity * subRunsNeeded,
-        })),
-      };
-    });
+    const materials = rawMaterials.map((mat) =>
+      buildMaterials(mat.typeId, mat.quantity * runsNeeded, 1),
+    );
 
     return {
       itemId: item.id,
@@ -148,33 +191,19 @@ export default async function PlanDetailPage({ params }: { params: Promise<{ id:
     };
   });
 
-  // ── Shopping list ─────────────────────────────────────────────────────────
-  // "buy" top-level materials + all sub-materials of "build" materials
-  const shoppingMap = new Map<number, { typeName: string; quantity: number }>();
-
+  // ── Buy / gather lists ────────────────────────────────────────────────────
+  const buyMap = new Map<number, { typeName: string; quantity: number }>();
+  const gatherMap = new Map<number, { typeName: string; quantity: number }>();
   for (const item of itemMaterials) {
-    for (const mat of item.materials) {
-      if (mat.decision === "buy") {
-        const prev = shoppingMap.get(mat.typeId);
-        shoppingMap.set(mat.typeId, {
-          typeName: mat.typeName,
-          quantity: (prev?.quantity ?? 0) + mat.quantity,
-        });
-      } else {
-        for (const sub of mat.subMaterials) {
-          const prev = shoppingMap.get(sub.typeId);
-          shoppingMap.set(sub.typeId, {
-            typeName: sub.typeName,
-            quantity: (prev?.quantity ?? 0) + sub.quantity,
-          });
-        }
-      }
-    }
+    collectItems(item.materials, buyMap, gatherMap);
   }
+  const toEntries = (map: Map<number, { typeName: string; quantity: number }>): ShoppingEntry[] =>
+    [...map.entries()]
+      .map(([typeId, { typeName, quantity }]) => ({ typeId, typeName, quantity }))
+      .sort((a, b) => a.typeName.localeCompare(b.typeName));
 
-  const shoppingList: ShoppingEntry[] = [...shoppingMap.entries()]
-    .map(([typeId, { typeName, quantity }]) => ({ typeId, typeName, quantity }))
-    .sort((a, b) => a.typeName.localeCompare(b.typeName));
+  const shoppingList = toEntries(buyMap);
+  const gatherList = toEntries(gatherMap);
 
   // ── Page ──────────────────────────────────────────────────────────────────
   return (
@@ -218,7 +247,7 @@ export default async function PlanDetailPage({ params }: { params: Promise<{ id:
           No items — add one above
         </p>
       ) : (
-        <PlanDetailBody planId={plan.id} items={itemMaterials} shopping={shoppingList} />
+        <PlanDetailBody planId={plan.id} items={itemMaterials} shopping={shoppingList} gather={gatherList} />
       )}
     </main>
   );

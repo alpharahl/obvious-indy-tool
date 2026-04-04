@@ -66,7 +66,7 @@ export async function removePlanItem(planId: string, itemId: string) {
   revalidatePath(`/plans/${planId}`);
 }
 
-export async function setPlanDecision(planId: string, typeId: number, decision: "buy" | "build") {
+export async function setPlanDecision(planId: string, typeId: number, decision: "buy" | "build" | "gather") {
   const userId = await requireUserId();
   const plan = await prisma.buildPlan.findFirst({ where: { id: planId, userId } });
   if (!plan) throw new Error("Plan not found");
