@@ -1,5 +1,3 @@
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
 generator client {
   provider = "prisma-client"
   output   = "../app/generated/prisma"
@@ -9,80 +7,64 @@ datasource db {
   provider = "postgresql"
 }
 
-// ============================================================
-// AUTH / USERS
-// A User is an app account. One user can link many EVE
-// characters (main + alts). Auth is handled via EVE SSO OAuth.
-// ============================================================
-
 model User {
   id         String      @id @default(cuid())
   createdAt  DateTime    @default(now())
   updatedAt  DateTime    @updatedAt
   characters Character[]
+  buildPlans BuildPlan[]
 }
 
-/// One EVE character, linked to a User account via EVE SSO.
 model Character {
-  id            String          @id @default(cuid())
-  characterId   Int             @unique  // EVE character ID
-  characterName String
-  corporationId Int?
-  allianceId    Int?
-  isMain        Boolean         @default(false)
-  userId        String
-  user          User            @relation(fields: [userId], references: [id], onDelete: Cascade)
-  token         CharacterToken?
-
-  // Live ESI data
-  industryJobs    IndustryJob[]
+  id              String           @id @default(cuid())
+  characterId     Int              @unique
+  characterName   String
+  corporationId   Int?
+  allianceId      Int?
+  isMain          Boolean          @default(false)
+  userId          String
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token           CharacterToken?
   ownedBlueprints OwnedBlueprint[]
   assets          Asset[]
   marketOrders    MarketOrder[]
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  industryJobs    IndustryJob[]
 }
 
-/// EVE SSO OAuth tokens for a character. Rotated on each refresh.
 model CharacterToken {
   id           String    @id @default(cuid())
   characterId  String    @unique
-  character    Character @relation(fields: [characterId], references: [id], onDelete: Cascade)
   accessToken  String
   refreshToken String
   expiresAt    DateTime
-  scopes       String[]  // granted ESI scopes
+  scopes       String[]
   updatedAt    DateTime  @updatedAt
+  character    Character @relation(fields: [characterId], references: [id], onDelete: Cascade)
 }
 
-// ============================================================
-// SDE — STATIC GAME DATA
-// Imported from the EVE Static Data Export. Never user-modified.
-// IDs match EVE's own IDs so ESI responses join cleanly.
-// ============================================================
-
-/// EVE item type (ship, module, ore, blueprint, etc.)
 model SdeType {
-  id          Int      @id  // typeID
-  name        String
-  description String?
-  groupId     Int
-  group       SdeGroup @relation(fields: [groupId], references: [id])
-  volume      Float?
-  mass        Float?
-  published   Boolean  @default(true)
-  metaGroupId Int?     // from invMetaTypes: 1=T1, 2=T2, 14=T3, null=no meta
-
+  id                Int                 @id
+  name              String
+  description       String?
+  groupId           Int
+  volume            Float?
+  mass              Float?
+  published         Boolean             @default(true)
+  metaGroupId       Int?
+  group             SdeGroup            @relation(fields: [groupId], references: [id])
+  assets            Asset[]
+  marketOrders      MarketOrder[]
+  ownedBlueprints   OwnedBlueprint[]
   blueprintMaterials BlueprintMaterial[]
   blueprintProducts  BlueprintProduct[]
-  assets             Asset[]
-  marketOrders       MarketOrder[]
-  ownedBlueprints    OwnedBlueprint[]
+  buildPlanItems     BuildPlanItem[]
+  buildPlanDecisions BuildPlanDecision[]
 }
 
 model SdeGroup {
-  id         Int         @id  // groupID
+  id         Int         @id
   name       String
   categoryId Int
   category   SdeCategory @relation(fields: [categoryId], references: [id])
@@ -90,31 +72,190 @@ model SdeGroup {
 }
 
 model SdeCategory {
-  id     Int        @id  // categoryID
+  id     Int        @id
   name   String
   groups SdeGroup[]
 }
 
-/// Blueprint definition from SDE. One blueprint can have multiple
-/// activities (manufacturing, copying, invention, etc.)
 model Blueprint {
-  typeId             Int                 @id  // blueprintTypeID
+  typeId             Int                 @id
   maxProductionLimit Int
   activities         BlueprintActivity[]
 }
 
 model BlueprintActivity {
-  id          Int             @id @default(autoincrement())
+  id          Int               @id @default(autoincrement())
   blueprintId Int
-  blueprint   Blueprint       @relation(fields: [blueprintId], references: [typeId])
   activity    ActivityType
-  time        Int             // base job duration in seconds
-
-  materials BlueprintMaterial[]
-  products  BlueprintProduct[]
-  skills    BlueprintSkill[]
+  time        Int
+  blueprint   Blueprint         @relation(fields: [blueprintId], references: [typeId])
+  materials   BlueprintMaterial[]
+  products    BlueprintProduct[]
+  skills      BlueprintSkill[]
 
   @@unique([blueprintId, activity])
+}
+
+model BlueprintMaterial {
+  id                  Int               @id @default(autoincrement())
+  blueprintActivityId Int
+  typeId              Int
+  quantity            Int
+  blueprintActivity   BlueprintActivity @relation(fields: [blueprintActivityId], references: [id])
+  type                SdeType           @relation(fields: [typeId], references: [id])
+
+  @@unique([blueprintActivityId, typeId])
+}
+
+model BlueprintProduct {
+  id                  Int               @id @default(autoincrement())
+  blueprintActivityId Int
+  typeId              Int
+  quantity            Int
+  probability         Float?
+  blueprintActivity   BlueprintActivity @relation(fields: [blueprintActivityId], references: [id])
+  type                SdeType           @relation(fields: [typeId], references: [id])
+
+  @@unique([blueprintActivityId, typeId])
+}
+
+model BlueprintSkill {
+  id                  Int               @id @default(autoincrement())
+  blueprintActivityId Int
+  skillTypeId         Int
+  level               Int
+  blueprintActivity   BlueprintActivity @relation(fields: [blueprintActivityId], references: [id])
+
+  @@unique([blueprintActivityId, skillTypeId])
+}
+
+model SdeRegion {
+  id           Int              @id
+  name         String
+  solarSystems SdeSolarSystem[]
+}
+
+model SdeSolarSystem {
+  id         Int          @id
+  name       String
+  regionId   Int
+  security   Float
+  region     SdeRegion    @relation(fields: [regionId], references: [id])
+  stations   SdeStation[]
+  structures Structure[]
+}
+
+model SdeStation {
+  id            Int            @id
+  name          String
+  solarSystemId Int
+  solarSystem   SdeSolarSystem @relation(fields: [solarSystemId], references: [id])
+}
+
+model IndustryJob {
+  jobId           Int       @id
+  characterId     String
+  activityId      Int
+  blueprintTypeId Int
+  outputTypeId    Int
+  runs            Int
+  status          JobStatus
+  startDate       DateTime
+  endDate         DateTime
+  completedDate   DateTime?
+  facilityId      BigInt
+  cost            Float?
+  probability     Float?
+  syncedAt        DateTime  @default(now())
+  character       Character @relation(fields: [characterId], references: [id], onDelete: Cascade)
+}
+
+model OwnedBlueprint {
+  id                 String    @id @default(cuid())
+  characterId        String
+  itemId             BigInt
+  typeId             Int
+  locationId         BigInt
+  runs               Int
+  materialEfficiency Int
+  timeEfficiency     Int
+  syncedAt           DateTime  @default(now()) @updatedAt
+  character          Character @relation(fields: [characterId], references: [id], onDelete: Cascade)
+  type               SdeType   @relation(fields: [typeId], references: [id])
+
+  @@unique([characterId, itemId])
+}
+
+model Structure {
+  id            BigInt         @id
+  name          String
+  solarSystemId Int
+  ownerId       Int
+  typeId        Int?
+  updatedAt     DateTime       @updatedAt
+  solarSystem   SdeSolarSystem @relation(fields: [solarSystemId], references: [id])
+}
+
+model Asset {
+  itemId      BigInt    @id
+  characterId String
+  typeId      Int
+  locationId  BigInt
+  quantity    Int
+  isSingleton Boolean
+  syncedAt    DateTime  @default(now()) @updatedAt
+  character   Character @relation(fields: [characterId], references: [id], onDelete: Cascade)
+  type        SdeType   @relation(fields: [typeId], references: [id])
+}
+
+model MarketOrder {
+  orderId      BigInt    @id
+  characterId  String
+  typeId       Int
+  locationId   BigInt
+  volumeTotal  Int
+  volumeRemain Int
+  price        Float
+  isBuyOrder   Boolean
+  issued       DateTime
+  duration     Int
+  syncedAt     DateTime  @default(now()) @updatedAt
+  character    Character @relation(fields: [characterId], references: [id], onDelete: Cascade)
+  type         SdeType   @relation(fields: [typeId], references: [id])
+}
+
+model BuildPlan {
+  id        String               @id @default(cuid())
+  userId    String
+  name      String
+  createdAt DateTime             @default(now())
+  updatedAt DateTime             @updatedAt
+  user      User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  items     BuildPlanItem[]
+  decisions BuildPlanDecision[]
+}
+
+model BuildPlanDecision {
+  id       String    @id @default(cuid())
+  planId   String
+  typeId   Int
+  decision String    // "buy" | "build"
+  plan     BuildPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  type     SdeType   @relation(fields: [typeId], references: [id])
+
+  @@unique([planId, typeId])
+}
+
+model BuildPlanItem {
+  id                String    @id @default(cuid())
+  planId            String
+  typeId            Int
+  quantity          Int
+  completedQuantity Int       @default(0)
+  plan              BuildPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  type              SdeType   @relation(fields: [typeId], references: [id])
+
+  @@unique([planId, typeId])
 }
 
 enum ActivityType {
@@ -126,86 +267,6 @@ enum ActivityType {
   REACTION
 }
 
-model BlueprintMaterial {
-  id                  Int               @id @default(autoincrement())
-  blueprintActivityId Int
-  blueprintActivity   BlueprintActivity @relation(fields: [blueprintActivityId], references: [id])
-  typeId              Int
-  type                SdeType           @relation(fields: [typeId], references: [id])
-  quantity            Int
-
-  @@unique([blueprintActivityId, typeId])
-}
-
-model BlueprintProduct {
-  id                  Int               @id @default(autoincrement())
-  blueprintActivityId Int
-  blueprintActivity   BlueprintActivity @relation(fields: [blueprintActivityId], references: [id])
-  typeId              Int
-  type                SdeType           @relation(fields: [typeId], references: [id])
-  quantity            Int
-  probability         Float?            // invention chance, null = 1.0
-
-  @@unique([blueprintActivityId, typeId])
-}
-
-model BlueprintSkill {
-  id                  Int               @id @default(autoincrement())
-  blueprintActivityId Int
-  blueprintActivity   BlueprintActivity @relation(fields: [blueprintActivityId], references: [id])
-  skillTypeId         Int               // references SdeType (skill items)
-  level               Int
-
-  @@unique([blueprintActivityId, skillTypeId])
-}
-
-model SdeRegion {
-  id           Int              @id  // regionID
-  name         String
-  solarSystems SdeSolarSystem[]
-}
-
-model SdeSolarSystem {
-  id        Int        @id  // solarSystemID
-  name      String
-  regionId  Int
-  region    SdeRegion  @relation(fields: [regionId], references: [id])
-  security  Float
-  stations  SdeStation[]
-  structures Structure[]
-}
-
-model SdeStation {
-  id            Int            @id  // stationID
-  name          String
-  solarSystemId Int
-  solarSystem   SdeSolarSystem @relation(fields: [solarSystemId], references: [id])
-}
-
-// ============================================================
-// LIVE DATA — synced from ESI per character
-// All live tables track syncedAt so stale data can be detected.
-// ============================================================
-
-/// Industry jobs from /characters/{id}/industry/jobs/
-model IndustryJob {
-  jobId           Int         @id  // job_id from ESI
-  characterId     String
-  character       Character   @relation(fields: [characterId], references: [id], onDelete: Cascade)
-  activityId      Int         // 1=mfg, 3=te, 4=me, 5=copy, 8=invention, 11=reaction
-  blueprintTypeId Int
-  outputTypeId    Int
-  runs            Int
-  status          JobStatus
-  startDate       DateTime
-  endDate         DateTime
-  completedDate   DateTime?
-  facilityId      BigInt      // structure or station
-  cost            Float?
-  probability     Float?
-  syncedAt        DateTime    @default(now()) @updatedAt
-}
-
 enum JobStatus {
   ACTIVE
   PAUSED
@@ -213,63 +274,4 @@ enum JobStatus {
   DELIVERED
   CANCELLED
   REVERTED
-}
-
-/// Blueprint copies/originals in a character's possession
-/// from /characters/{id}/blueprints/
-model OwnedBlueprint {
-  id                 String    @id @default(cuid())
-  characterId        String
-  character          Character @relation(fields: [characterId], references: [id], onDelete: Cascade)
-  itemId             BigInt    // unique item instance ID from ESI
-  typeId             Int
-  type               SdeType   @relation(fields: [typeId], references: [id])
-  locationId         BigInt
-  runs               Int       // -1 = BPO (original), >0 = BPC runs remaining
-  materialEfficiency Int       // 0–10
-  timeEfficiency     Int       // 0–20
-  syncedAt           DateTime  @default(now()) @updatedAt
-
-  @@unique([characterId, itemId])
-}
-
-/// Cached player-owned structure info from ESI /universe/structures/{id}/
-model Structure {
-  id            BigInt         @id  // structure_id from ESI
-  name          String
-  solarSystemId Int
-  solarSystem   SdeSolarSystem @relation(fields: [solarSystemId], references: [id])
-  ownerId       Int            // corporation that owns the structure
-  typeId        Int?           // structure type (Astrahus, Raitaru, etc.)
-  updatedAt     DateTime       @updatedAt
-}
-
-/// Character assets from /characters/{id}/assets/
-model Asset {
-  itemId      BigInt    @id  // unique item instance ID
-  characterId String
-  character   Character @relation(fields: [characterId], references: [id], onDelete: Cascade)
-  typeId      Int
-  type        SdeType   @relation(fields: [typeId], references: [id])
-  locationId  BigInt
-  quantity    Int
-  isSingleton Boolean
-  syncedAt    DateTime  @default(now()) @updatedAt
-}
-
-/// Active market orders from /characters/{id}/orders/
-model MarketOrder {
-  orderId      BigInt    @id  // order_id from ESI
-  characterId  String
-  character    Character @relation(fields: [characterId], references: [id], onDelete: Cascade)
-  typeId       Int
-  type         SdeType   @relation(fields: [typeId], references: [id])
-  locationId   BigInt
-  volumeTotal  Int
-  volumeRemain Int
-  price        Float
-  isBuyOrder   Boolean
-  issued       DateTime
-  duration     Int       // days
-  syncedAt     DateTime  @default(now()) @updatedAt
 }

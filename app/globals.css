@@ -24,3 +24,15 @@ body {
   color: var(--foreground);
   font-family: var(--font-geist-mono), monospace;
 }
+
+input[type="text"],
+input[type="number"],
+input[type="password"],
+input[type="email"],
+input[type="search"] {
+  border-color: var(--accent) !important;
+}
+
+input::placeholder {
+  color: color-mix(in srgb, var(--accent) 35%, transparent);
+}

@@ -107,8 +107,67 @@ async function fetchSlots() {
 
 // ── Page ────────────────────────────────────────────────────────────────────
 
+async function fetchPlans(userId: string) {
+  const plans = await prisma.buildPlan.findMany({
+    where: { userId },
+    include: { items: { include: { type: { select: { name: true } } }, orderBy: { type: { name: "asc" } } } },
+    orderBy: { updatedAt: "desc" },
+  });
+
+  const allProductTypeIds = [...new Set(plans.flatMap((p) => p.items.map((i) => i.typeId)))];
+
+  // productTypeId → { blueprintTypeId, baseTime, outputQty }
+  const bpInfoByProductTypeId = new Map<number, { blueprintTypeId: number; baseTime: number; outputQty: number }>();
+  if (allProductTypeIds.length) {
+    const mfgActivities = await prisma.blueprintActivity.findMany({
+      where: { activity: "MANUFACTURING", products: { some: { typeId: { in: allProductTypeIds } } } },
+      include: { products: { where: { typeId: { in: allProductTypeIds } } } },
+    });
+    for (const act of mfgActivities) {
+      for (const prod of act.products) {
+        bpInfoByProductTypeId.set(prod.typeId, { blueprintTypeId: act.blueprintId, baseTime: act.time, outputQty: prod.quantity });
+      }
+    }
+  }
+
+  const neededBpTypeIds = [...new Set([...bpInfoByProductTypeId.values()].map((v) => v.blueprintTypeId))];
+  const ownedBpsReal = neededBpTypeIds.length
+    ? await prisma.ownedBlueprint.findMany({
+        where: { typeId: { in: neededBpTypeIds }, character: { userId } },
+        select: { typeId: true, timeEfficiency: true },
+      })
+    : [];
+
+  // blueprintTypeId → best TE
+  const bestTeByBpTypeId = new Map<number, number>();
+  for (const ob of ownedBpsReal) {
+    const cur = bestTeByBpTypeId.get(ob.typeId) ?? -1;
+    if (ob.timeEfficiency > cur) bestTeByBpTypeId.set(ob.typeId, ob.timeEfficiency);
+  }
+
+  return plans.map((p) => ({
+    id: p.id,
+    name: p.name,
+    items: p.items.map((i) => {
+      const remaining = Math.max(0, i.quantity - i.completedQuantity);
+      const info = bpInfoByProductTypeId.get(i.typeId);
+      let estSeconds: number | null = null;
+      if (info && remaining > 0) {
+        const te = bestTeByBpTypeId.get(info.blueprintTypeId) ?? 0;
+        const effectiveTime = Math.round(info.baseTime * (1 - te / 100));
+        estSeconds = effectiveTime * Math.ceil(remaining / info.outputQty);
+      }
+      return { typeName: i.type.name, quantity: i.quantity, completedQuantity: i.completedQuantity, estSeconds };
+    }),
+  }));
+}
+
 export default async function Home() {
-  const slots = await fetchSlots().catch(() => null);
+  const session = await auth();
+  const [slots, plans] = await Promise.all([
+    fetchSlots().catch(() => null),
+    session?.user?.id ? fetchPlans(session.user.id).catch(() => []) : Promise.resolve([]),
+  ]);
 
   return (
     <main className="flex-1 overflow-y-auto p-4 flex flex-col gap-4">
@@ -150,7 +209,7 @@ export default async function Home() {
       {/* Middle row: production table + resource inventory */}
       <div className="grid grid-cols-3 gap-4">
         <div className="col-span-2">
-          <ActiveProductionTable />
+          <ActiveProductionTable plans={plans} />
         </div>
         <div>
           <ResourceInventory />
