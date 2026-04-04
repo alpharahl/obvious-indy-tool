@@ -26,6 +26,7 @@ export interface ShoppingEntry {
   typeId: number;
   typeName: string;
   quantity: number;
+  allocated: number;  // assigned from inventory
 }
 
 interface Props {
@@ -193,16 +194,40 @@ function SidePanel({
           </p>
         ) : (
           <div className="divide-y" style={{ borderColor: "var(--border)" }}>
-            {entries.map((entry) => (
-              <div key={entry.typeId} className="flex items-center justify-between px-4 py-2 gap-2">
-                <span className="text-xs truncate min-w-0" style={{ color: "var(--foreground)" }}>
-                  {entry.typeName}
-                </span>
-                <span className="text-xs tabular-nums shrink-0" style={{ color: "var(--accent)" }}>
-                  {entry.quantity.toLocaleString()}
-                </span>
-              </div>
-            ))}
+            {entries.map((entry) => {
+              const stillNeeded = Math.max(0, entry.quantity - entry.allocated);
+              const covered = entry.allocated >= entry.quantity;
+              return (
+                <div key={entry.typeId} className="px-4 py-2 flex flex-col gap-0.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs truncate min-w-0" style={{ color: "var(--foreground)" }}>
+                      {entry.typeName}
+                    </span>
+                    <span
+                      className="text-xs tabular-nums shrink-0 font-medium"
+                      style={{ color: covered ? "var(--accent)" : "var(--foreground)" }}
+                    >
+                      {covered ? "✓" : stillNeeded.toLocaleString()}
+                    </span>
+                  </div>
+                  {entry.allocated > 0 && (
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs" style={{ color: "var(--muted-fg)" }}>
+                        {entry.quantity.toLocaleString()} needed
+                      </span>
+                      <span className="text-xs tabular-nums" style={{ color: "var(--accent)", opacity: 0.6 }}>
+                        −{Math.min(entry.allocated, entry.quantity).toLocaleString()} allocated
+                      </span>
+                    </div>
+                  )}
+                  {!entry.allocated && (
+                    <span className="text-xs tabular-nums" style={{ color: "var(--muted-fg)" }}>
+                      {entry.quantity.toLocaleString()} needed
+                    </span>
+                  )}
+                </div>
+              );
+            })}
           </div>
         )
       )}

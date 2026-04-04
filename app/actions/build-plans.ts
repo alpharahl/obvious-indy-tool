@@ -84,6 +84,24 @@ export async function setPlanDecision(planId: string, typeId: number, decision: 
   revalidatePath(`/plans/${planId}`);
 }
 
+export async function setPlanAllocation(planId: string, typeId: number, quantity: number) {
+  const userId = await requireUserId();
+  const plan = await prisma.buildPlan.findFirst({ where: { id: planId, userId } });
+  if (!plan) throw new Error("Plan not found");
+
+  if (quantity <= 0) {
+    await prisma.buildPlanAllocation.deleteMany({ where: { planId, typeId } });
+  } else {
+    await prisma.buildPlanAllocation.upsert({
+      where: { planId_typeId: { planId, typeId } },
+      update: { quantity },
+      create: { planId, typeId, quantity },
+    });
+  }
+  revalidatePath("/inventory");
+  revalidatePath(`/plans/${planId}`);
+}
+
 export async function searchBuildableTypes(query: string) {
   if (query.trim().length < 2) return [];
   return prisma.sdeType.findMany({

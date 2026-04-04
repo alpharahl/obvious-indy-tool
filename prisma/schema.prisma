@@ -45,22 +45,23 @@ model CharacterToken {
 }
 
 model SdeType {
-  id                Int                 @id
-  name              String
-  description       String?
-  groupId           Int
-  volume            Float?
-  mass              Float?
-  published         Boolean             @default(true)
-  metaGroupId       Int?
-  group             SdeGroup            @relation(fields: [groupId], references: [id])
-  assets            Asset[]
-  marketOrders      MarketOrder[]
-  ownedBlueprints   OwnedBlueprint[]
-  blueprintMaterials BlueprintMaterial[]
-  blueprintProducts  BlueprintProduct[]
-  buildPlanItems     BuildPlanItem[]
-  buildPlanDecisions BuildPlanDecision[]
+  id                   Int                   @id
+  name                 String
+  description          String?
+  groupId              Int
+  volume               Float?
+  mass                 Float?
+  published            Boolean               @default(true)
+  metaGroupId          Int?
+  group                SdeGroup              @relation(fields: [groupId], references: [id])
+  assets               Asset[]
+  marketOrders         MarketOrder[]
+  ownedBlueprints      OwnedBlueprint[]
+  blueprintMaterials   BlueprintMaterial[]
+  blueprintProducts    BlueprintProduct[]
+  buildPlanItems       BuildPlanItem[]
+  buildPlanDecisions   BuildPlanDecision[]
+  buildPlanAllocations BuildPlanAllocation[]
 }
 
 model SdeGroup {
@@ -225,21 +226,33 @@ model MarketOrder {
 }
 
 model BuildPlan {
-  id        String               @id @default(cuid())
-  userId    String
-  name      String
-  createdAt DateTime             @default(now())
-  updatedAt DateTime             @updatedAt
-  user      User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
-  items     BuildPlanItem[]
-  decisions BuildPlanDecision[]
+  id          String                @id @default(cuid())
+  userId      String
+  name        String
+  createdAt   DateTime              @default(now())
+  updatedAt   DateTime              @updatedAt
+  user        User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  items       BuildPlanItem[]
+  decisions   BuildPlanDecision[]
+  allocations BuildPlanAllocation[]
 }
 
 model BuildPlanDecision {
   id       String    @id @default(cuid())
   planId   String
   typeId   Int
-  decision String    // "buy" | "build"
+  decision String    // "buy" | "build" | "gather"
+  plan     BuildPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  type     SdeType   @relation(fields: [typeId], references: [id])
+
+  @@unique([planId, typeId])
+}
+
+model BuildPlanAllocation {
+  id       String    @id @default(cuid())
+  planId   String
+  typeId   Int
+  quantity Int       @default(0)
   plan     BuildPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
   type     SdeType   @relation(fields: [typeId], references: [id])
 

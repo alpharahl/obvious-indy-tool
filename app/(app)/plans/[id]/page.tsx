@@ -83,8 +83,12 @@ export default async function PlanDetailPage({ params }: { params: Promise<{ id:
   }
 
   // ── Decisions ─────────────────────────────────────────────────────────────
-  const decisions = await prisma.buildPlanDecision.findMany({ where: { planId: plan.id } });
-  const decisionMap = new Map(decisions.map((d) => [d.typeId, d.decision as "buy" | "build"]));
+  const [decisions, allocations] = await Promise.all([
+    prisma.buildPlanDecision.findMany({ where: { planId: plan.id } }),
+    prisma.buildPlanAllocation.findMany({ where: { planId: plan.id } }),
+  ]);
+  const decisionMap = new Map(decisions.map((d) => [d.typeId, d.decision as "buy" | "build" | "gather"]));
+  const allocationMap = new Map(allocations.map((a) => [a.typeId, a.quantity]));
 
   // ── Levels 2 → MAX_MATERIAL_DEPTH: iterative fetch ───────────────────────
   // We fetch blueprint data for ALL materials at each level so we know canBuild,
@@ -199,7 +203,12 @@ export default async function PlanDetailPage({ params }: { params: Promise<{ id:
   }
   const toEntries = (map: Map<number, { typeName: string; quantity: number }>): ShoppingEntry[] =>
     [...map.entries()]
-      .map(([typeId, { typeName, quantity }]) => ({ typeId, typeName, quantity }))
+      .map(([typeId, { typeName, quantity }]) => ({
+        typeId,
+        typeName,
+        quantity,
+        allocated: allocationMap.get(typeId) ?? 0,
+      }))
       .sort((a, b) => a.typeName.localeCompare(b.typeName));
 
   const shoppingList = toEntries(buyMap);
