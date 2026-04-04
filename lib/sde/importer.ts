@@ -229,6 +229,22 @@ export async function runSdeImport(emit: (event: ProgressEvent) => void): Promis
     const typeVol   = pick(typeCols, "invTypes", "volume");
     const typeMass  = pick(typeCols, "invTypes", "mass");
     const typePub   = pick(typeCols, "invTypes", "published");
+
+    // Build a metaGroupId lookup from invMetaTypes (typeID → metaGroupID).
+    const metaGroupById = new Map<number, number>();
+    const availTables = new Set(allTables(db));
+    if (availTables.has("invMetaTypes")) {
+      const metaCols    = cols(db, "invMetaTypes");
+      const metaTypeId  = pick(metaCols, "invMetaTypes", "typeID");
+      const metaGroupId = pick(metaCols, "invMetaTypes", "metaGroupID");
+      const metaRows    = db
+        .prepare(`SELECT ${metaTypeId}, ${metaGroupId} FROM invMetaTypes`)
+        .all() as Record<string, unknown>[];
+      for (const r of metaRows) {
+        metaGroupById.set(r[metaTypeId] as number, r[metaGroupId] as number);
+      }
+    }
+
     const types = db
       .prepare(`SELECT ${typeId}, ${typeGrpId}, ${typeName}, ${typeDesc}, ${typeVol}, ${typeMass}, ${typePub} FROM invTypes`)
       .all() as Record<string, unknown>[];
@@ -243,6 +259,7 @@ export async function runSdeImport(emit: (event: ProgressEvent) => void): Promis
           volume: (r[typeVol] as number | null) ?? null,
           mass: (r[typeMass] as number | null) ?? null,
           published: r[typePub] === 1,
+          metaGroupId: metaGroupById.get(r[typeId] as number) ?? null,
         })),
         skipDuplicates: true,
       })

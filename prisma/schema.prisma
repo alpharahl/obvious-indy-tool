@@ -72,6 +72,7 @@ model SdeType {
   volume      Float?
   mass        Float?
   published   Boolean  @default(true)
+  metaGroupId Int?     // from invMetaTypes: 1=T1, 2=T2, 14=T3, null=no meta
 
   blueprintMaterials BlueprintMaterial[]
   blueprintProducts  BlueprintProduct[]
