@@ -13,6 +13,7 @@ model User {
   updatedAt  DateTime    @updatedAt
   characters Character[]
   buildPlans BuildPlan[]
+  stockpiles Stockpile[]
 }
 
 model Character {
@@ -62,6 +63,7 @@ model SdeType {
   buildPlanItems       BuildPlanItem[]
   buildPlanDecisions   BuildPlanDecision[]
   buildPlanAllocations BuildPlanAllocation[]
+  stockpileItems       StockpileItem[]
 }
 
 model SdeGroup {
@@ -269,6 +271,27 @@ model BuildPlanItem {
   type              SdeType   @relation(fields: [typeId], references: [id])
 
   @@unique([planId, typeId])
+}
+
+model Stockpile {
+  id        String          @id @default(cuid())
+  userId    String
+  name      String
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+  user      User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  items     StockpileItem[]
+}
+
+model StockpileItem {
+  id          String    @id @default(cuid())
+  stockpileId String
+  typeId      Int
+  quantity    Int
+  stockpile   Stockpile @relation(fields: [stockpileId], references: [id], onDelete: Cascade)
+  type        SdeType   @relation(fields: [typeId], references: [id])
+
+  @@unique([stockpileId, typeId])
 }
 
 enum ActivityType {

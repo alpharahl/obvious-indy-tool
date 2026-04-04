@@ -5,6 +5,7 @@ import { auth } from "../../../auth";
 import { prisma } from "../../../lib/prisma";
 import { computePlanMaterials } from "../../../lib/plan-materials";
 import InventoryPlanList, { type InventoryPlanEntry } from "../../components/InventoryPlanList";
+import StockpileManager from "../../components/StockpileManager";
 
 export default async function InventoryPage() {
   const session = await auth();
@@ -18,13 +19,23 @@ export default async function InventoryPage() {
     orderBy: { updatedAt: "desc" },
   });
 
-  // Aggregate assets by typeId across all characters
-  const rawAssets = await prisma.asset.groupBy({
-    by: ["typeId"],
-    where: { character: { userId } },
-    _sum: { quantity: true },
+  // Fetch stockpiles with items
+  const stockpiles = await prisma.stockpile.findMany({
+    where: { userId },
+    include: { items: true },
+    orderBy: { updatedAt: "desc" },
   });
-  const assetQtyByTypeId = new Map(rawAssets.map((a) => [a.typeId, a._sum.quantity ?? 0]));
+
+  // Aggregate stockpile quantities by typeId across all stockpiles
+  const stockpileQtyByTypeId = new Map<number, number>();
+  for (const sp of stockpiles) {
+    for (const item of sp.items) {
+      stockpileQtyByTypeId.set(
+        item.typeId,
+        (stockpileQtyByTypeId.get(item.typeId) ?? 0) + item.quantity,
+      );
+    }
+  }
 
   // Compute material lists for each plan in parallel
   const planEntries: InventoryPlanEntry[] = await Promise.all(
@@ -40,25 +51,47 @@ export default async function InventoryPage() {
           typeName: mat.typeName,
           needed: mat.needed,
           kind: mat.kind,
-          available: assetQtyByTypeId.get(mat.typeId) ?? 0,
+          available: stockpileQtyByTypeId.get(mat.typeId) ?? 0,
           allocated: allocationMap.get(mat.typeId) ?? 0,
         })),
       };
     }),
   );
 
+  // Shape stockpiles for the client component
+  const existingStockpiles = stockpiles.map((sp) => ({
+    id: sp.id,
+    name: sp.name,
+    itemCount: sp.items.length,
+    updatedAt: sp.updatedAt.toISOString(),
+  }));
+
   return (
-    <main className="flex-1 overflow-y-auto p-4 flex flex-col gap-4 min-w-0">
+    <main className="flex-1 overflow-y-auto p-4 flex flex-col gap-6 min-w-0">
       <div>
         <h1 className="text-base uppercase tracking-widest" style={{ color: "var(--foreground)" }}>
           Inventory
         </h1>
         <p className="text-xs mt-0.5" style={{ color: "var(--muted-fg)" }}>
-          Assign on-hand materials to build plans
+          Track stockpiles and assign materials to build plans
         </p>
       </div>
 
-      <InventoryPlanList plans={planEntries} />
+      <StockpileManager existingStockpiles={existingStockpiles} />
+
+      <div style={{ borderTop: "1px solid var(--border)" }} />
+
+      <div className="flex flex-col gap-3">
+        <div>
+          <h2 className="text-xs uppercase tracking-widest" style={{ color: "var(--foreground)" }}>
+            Build Plans
+          </h2>
+          <p className="text-xs mt-0.5" style={{ color: "var(--muted-fg)" }}>
+            Allocate stockpile materials to each plan
+          </p>
+        </div>
+        <InventoryPlanList plans={planEntries} />
+      </div>
     </main>
   );
 }
