@@ -117,25 +117,62 @@ export default async function AccountPage() {
     }
   }
 
+  // Build lookup for nested asset resolution.
+  const assetByItemId = new Map(rawAssets.map((a) => [a.itemId, a]));
+
+  // Which itemIds are referenced as locationId by other assets (ships/containers).
+  const containerItemIds = new Set<bigint>();
+  for (const a of rawAssets) {
+    if (assetByItemId.has(a.locationId)) containerItemIds.add(a.locationId);
+  }
+
+  // Walk up the locationId chain to the root station/structure.
+  function getRootLocationId(startLocationId: bigint): bigint {
+    let locId = startLocationId;
+    const seen = new Set<bigint>();
+    while (assetByItemId.has(locId)) {
+      if (seen.has(locId)) break; // cycle guard
+      seen.add(locId);
+      locId = assetByItemId.get(locId)!.locationId;
+    }
+    return locId;
+  }
+
+  // Find the top-level container (directly at station) that this asset is inside, if any.
+  function getTopLevelContainerId(locationId: bigint): bigint | null {
+    if (!assetByItemId.has(locationId)) return null; // directly at station
+    // Walk up until we reach the container whose own location is a station.
+    let current = assetByItemId.get(locationId)!;
+    const seen = new Set<bigint>();
+    while (assetByItemId.has(current.locationId)) {
+      if (seen.has(current.itemId)) break;
+      seen.add(current.itemId);
+      current = assetByItemId.get(current.locationId)!;
+    }
+    return current.itemId;
+  }
+
   // BigInt can't cross the server→client boundary directly — serialise to string.
   const assets: AssetRow[] = rawAssets.map((a) => {
+    const rootLocId = getRootLocationId(a.locationId);
+
     let locationName = "Unknown Structure";
     let solarSystemName = "Unknown";
     let regionName = "Unknown";
 
-    const station = stationMap.get(a.locationId);
+    const station = stationMap.get(rootLocId);
     if (station) {
       locationName = station.name;
       solarSystemName = station.solarSystem.name;
       regionName = station.solarSystem.region.name;
     } else {
-      const structure = structureMap.get(a.locationId);
+      const structure = structureMap.get(rootLocId);
       if (structure) {
         locationName = structure.name;
         solarSystemName = structure.solarSystem.name;
         regionName = structure.solarSystem.region.name;
       } else {
-        const sys = solarSystemMap.get(a.locationId);
+        const sys = solarSystemMap.get(rootLocId);
         if (sys) {
           locationName = sys.name;
           solarSystemName = sys.name;
@@ -143,6 +180,8 @@ export default async function AccountPage() {
         }
       }
     }
+
+    const topContainerId = getTopLevelContainerId(a.locationId);
 
     return {
       itemId: a.itemId.toString(),
@@ -153,6 +192,9 @@ export default async function AccountPage() {
       locationName,
       solarSystemName,
       regionName,
+      containerId: topContainerId?.toString() ?? null,
+      containerName: topContainerId ? (assetByItemId.get(topContainerId)?.type.name ?? null) : null,
+      isContainer: containerItemIds.has(a.itemId),
     };
   });
 

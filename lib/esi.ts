@@ -20,7 +20,16 @@ async function refreshAccessToken(characterId: string, refreshToken: string): Pr
     cache: "no-store",
   });
 
-  if (!res.ok) throw new Error(`Token refresh failed: ${res.status}`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    const reason = (body as { error?: string }).error ?? res.status.toString();
+    if (res.status === 400 && reason === "invalid_grant") {
+      // Refresh token revoked or expired — remove it so the user knows to re-link.
+      await prisma.characterToken.delete({ where: { characterId } }).catch(() => {});
+      throw new Error(`EVE token revoked for character ${characterId} — please re-link`);
+    }
+    throw new Error(`Token refresh failed: ${res.status} ${reason}`);
+  }
   const data = await res.json();
 
   const newToken: string = data.access_token;
@@ -38,6 +47,11 @@ async function refreshAccessToken(characterId: string, refreshToken: string): Pr
   return newToken;
 }
 
+function esiDelay(res: Response): Promise<void> {
+  const resetIn = parseInt(res.headers.get("x-esi-error-limit-reset") ?? "1", 10);
+  return new Promise((resolve) => setTimeout(resolve, (resetIn + 1) * 1000));
+}
+
 // characterId is Character.id (internal cuid), not the EVE character ID.
 export async function esiGet<T>(path: string, characterId: string): Promise<T> {
   const token = await prisma.characterToken.findUnique({ where: { characterId } });
@@ -53,9 +67,22 @@ export async function esiGet<T>(path: string, characterId: string): Promise<T> {
     next: { revalidate: 60 },
   });
 
+  if (res.status === 420) {
+    // Error limited — wait for the reset window then retry once.
+    await esiDelay(res);
+    const retry = await fetch(`${ESI_BASE}${path}`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      next: { revalidate: 60 },
+    });
+    if (!retry.ok) throw new Error(`ESI ${path} → ${retry.status} (after 420 retry)`);
+    return retry.json() as T;
+  }
+
   if (res.status === 401) {
-    // Expired mid-flight; refresh and retry once.
-    accessToken = await refreshAccessToken(characterId, token.refreshToken);
+    // Expired mid-flight; re-read the token from DB (it may have been rotated above) then retry.
+    const freshToken = await prisma.characterToken.findUnique({ where: { characterId } });
+    if (!freshToken) throw new Error(`No token for character ${characterId}`);
+    accessToken = await refreshAccessToken(characterId, freshToken.refreshToken);
     const retry = await fetch(`${ESI_BASE}${path}`, {
       headers: { Authorization: `Bearer ${accessToken}` },
       next: { revalidate: 60 },

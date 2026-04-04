@@ -11,6 +11,9 @@ export interface AssetRow {
   locationName: string;
   solarSystemName: string;
   regionName: string;
+  containerId: string | null;    // itemId of top-level container/ship at station (if nested)
+  containerName: string | null;  // typeName of that container/ship
+  isContainer: boolean;          // this asset itself contains other assets
 }
 
 interface CharacterOption {
@@ -27,6 +30,7 @@ export default function AssetList({ characters, assets }: Props) {
   const [filter, setFilter] = useState<string>("all");
   const [openRegions, setOpenRegions] = useState<Set<string>>(new Set());
   const [openStations, setOpenStations] = useState<Set<string>>(new Set());
+  const [openContainers, setOpenContainers] = useState<Set<string>>(new Set());
 
   const visible =
     filter === "all" ? assets : assets.filter((a) => a.characterId === filter);
@@ -51,6 +55,14 @@ export default function AssetList({ characters, assets }: Props) {
 
   function toggleStation(key: string) {
     setOpenStations((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  }
+
+  function toggleContainer(key: string) {
+    setOpenContainers((prev) => {
       const next = new Set(prev);
       if (next.has(key)) next.delete(key); else next.add(key);
       return next;
@@ -169,37 +181,99 @@ export default function AssetList({ characters, assets }: Props) {
                               </span>
                             </button>
 
-                            {/* Items */}
-                            {stationOpen && (
-                              <div className="ml-4 mt-1 flex flex-col gap-0.5">
-                                {items
-                                  .sort((a, b) => a.typeName.localeCompare(b.typeName))
-                                  .map((a) => (
-                                    <div
-                                      key={a.itemId}
-                                      className="flex items-center justify-between px-3 py-1.5 rounded border"
-                                      style={{ background: "var(--panel)", borderColor: "var(--border)" }}
-                                    >
-                                      <div className="flex flex-col">
-                                        <span className="text-xs" style={{ color: "var(--foreground)" }}>
-                                          {a.typeName}
-                                        </span>
-                                        {filter === "all" && (
-                                          <span className="text-xs" style={{ color: "var(--muted-fg)" }}>
-                                            {a.characterName}
-                                          </span>
-                                        )}
-                                      </div>
-                                      <span
-                                        className="text-xs tabular-nums ml-4 shrink-0"
-                                        style={{ color: "var(--accent)" }}
-                                      >
-                                        {a.quantity.toLocaleString()}
+                            {/* Items + Containers */}
+                            {stationOpen && (() => {
+                              const directItems = items.filter(a => !a.containerId && !a.isContainer);
+                              const topContainers = items.filter(a => !a.containerId && a.isContainer);
+                              const childrenByContainer = new Map<string, AssetRow[]>();
+                              for (const a of items) {
+                                if (a.containerId) {
+                                  if (!childrenByContainer.has(a.containerId)) childrenByContainer.set(a.containerId, []);
+                                  childrenByContainer.get(a.containerId)!.push(a);
+                                }
+                              }
+
+                              const renderItem = (a: AssetRow) => (
+                                <div
+                                  key={a.itemId}
+                                  className="flex items-center justify-between px-3 py-1.5 rounded border"
+                                  style={{ background: "var(--panel)", borderColor: "var(--border)" }}
+                                >
+                                  <div className="flex flex-col">
+                                    <span className="text-xs" style={{ color: "var(--foreground)" }}>
+                                      {a.typeName}
+                                    </span>
+                                    {filter === "all" && (
+                                      <span className="text-xs" style={{ color: "var(--muted-fg)" }}>
+                                        {a.characterName}
                                       </span>
-                                    </div>
-                                  ))}
-                              </div>
-                            )}
+                                    )}
+                                  </div>
+                                  <span
+                                    className="text-xs tabular-nums ml-4 shrink-0"
+                                    style={{ color: "var(--accent)" }}
+                                  >
+                                    {a.quantity.toLocaleString()}
+                                  </span>
+                                </div>
+                              );
+
+                              return (
+                                <div className="ml-4 mt-1 flex flex-col gap-0.5">
+                                  {/* Top-level containers (ships/containers directly at station) */}
+                                  {topContainers
+                                    .sort((a, b) => a.typeName.localeCompare(b.typeName))
+                                    .map((container) => {
+                                      const containerKey = `${stationKey}||${container.itemId}`;
+                                      const containerOpen = openContainers.has(containerKey);
+                                      const children = childrenByContainer.get(container.itemId) ?? [];
+                                      const childTotal = children.reduce((s, a) => s + a.quantity, 0);
+                                      return (
+                                        <div key={container.itemId} className="flex flex-col">
+                                          <button
+                                            onClick={() => toggleContainer(containerKey)}
+                                            className="flex items-center justify-between px-3 py-1.5 rounded border w-full text-left cursor-pointer transition-opacity hover:opacity-70"
+                                            style={{ background: "var(--panel)", borderColor: "var(--border)" }}
+                                          >
+                                            <div className="flex items-center gap-2 min-w-0">
+                                              <span
+                                                className="text-xs shrink-0"
+                                                style={{ color: "var(--accent)", fontFamily: "monospace" }}
+                                              >
+                                                {containerOpen ? "▼" : "▶"}
+                                              </span>
+                                              <div className="flex flex-col min-w-0">
+                                                <span className="text-xs truncate" style={{ color: "var(--foreground)" }}>
+                                                  {container.typeName}
+                                                </span>
+                                                {filter === "all" && (
+                                                  <span className="text-xs" style={{ color: "var(--muted-fg)" }}>
+                                                    {container.characterName}
+                                                  </span>
+                                                )}
+                                              </div>
+                                            </div>
+                                            <span className="text-xs tabular-nums ml-4 shrink-0" style={{ color: "var(--muted-fg)" }}>
+                                              {children.length} {children.length === 1 ? "type" : "types"} · {childTotal.toLocaleString()}
+                                            </span>
+                                          </button>
+                                          {containerOpen && children.length > 0 && (
+                                            <div className="ml-4 mt-0.5 flex flex-col gap-0.5">
+                                              {children
+                                                .sort((a, b) => a.typeName.localeCompare(b.typeName))
+                                                .map(renderItem)}
+                                            </div>
+                                          )}
+                                        </div>
+                                      );
+                                    })}
+                                  {/* Items directly at station */}
+                                  {directItems
+                                    .sort((a, b) => a.typeName.localeCompare(b.typeName))
+                                    .map(renderItem)}
+                                </div>
+                              );
+                            })()}
                           </div>
                         );
                       })}
