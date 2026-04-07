@@ -174,19 +174,31 @@ model IndustryJob {
 }
 
 model OwnedBlueprint {
-  id                 String    @id @default(cuid())
-  characterId        String
-  itemId             BigInt
-  typeId             Int
-  locationId         BigInt
-  runs               Int
-  materialEfficiency Int
-  timeEfficiency     Int
-  syncedAt           DateTime  @default(now()) @updatedAt
-  character          Character @relation(fields: [characterId], references: [id], onDelete: Cascade)
-  type               SdeType   @relation(fields: [typeId], references: [id])
+  id                      String               @id @default(cuid())
+  characterId             String
+  itemId                  BigInt
+  typeId                  Int
+  locationId              BigInt
+  runs                    Int
+  materialEfficiency      Int
+  timeEfficiency          Int
+  syncedAt                DateTime             @default(now()) @updatedAt
+  character               Character            @relation(fields: [characterId], references: [id], onDelete: Cascade)
+  type                    SdeType              @relation(fields: [typeId], references: [id])
+  planBlueprintSelections BuildPlanBlueprint[]
 
   @@unique([characterId, itemId])
+}
+
+model BuildPlanBlueprint {
+  id               String         @id @default(cuid())
+  planId           String
+  typeId           Int            // product typeId (the thing being built)
+  ownedBlueprintId String
+  plan             BuildPlan      @relation(fields: [planId], references: [id], onDelete: Cascade)
+  ownedBlueprint   OwnedBlueprint @relation(fields: [ownedBlueprintId], references: [id], onDelete: Cascade)
+
+  @@unique([planId, typeId])
 }
 
 model Structure {
@@ -228,15 +240,16 @@ model MarketOrder {
 }
 
 model BuildPlan {
-  id          String                @id @default(cuid())
-  userId      String
-  name        String
-  createdAt   DateTime              @default(now())
-  updatedAt   DateTime              @updatedAt
-  user        User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
-  items       BuildPlanItem[]
-  decisions   BuildPlanDecision[]
-  allocations BuildPlanAllocation[]
+  id                  String                @id @default(cuid())
+  userId              String
+  name                String
+  createdAt           DateTime              @default(now())
+  updatedAt           DateTime              @updatedAt
+  user                User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  items               BuildPlanItem[]
+  decisions           BuildPlanDecision[]
+  allocations         BuildPlanAllocation[]
+  blueprintSelections BuildPlanBlueprint[]
 }
 
 model BuildPlanDecision {

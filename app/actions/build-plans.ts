@@ -102,6 +102,27 @@ export async function setPlanAllocation(planId: string, typeId: number, quantity
   revalidatePath(`/plans/${planId}`);
 }
 
+export async function setPlanBlueprint(planId: string, productTypeId: number, ownedBlueprintId: string | null) {
+  const userId = await requireUserId();
+  const plan = await prisma.buildPlan.findFirst({ where: { id: planId, userId } });
+  if (!plan) throw new Error("Plan not found");
+
+  if (!ownedBlueprintId) {
+    await prisma.buildPlanBlueprint.deleteMany({ where: { planId, typeId: productTypeId } });
+  } else {
+    const bp = await prisma.ownedBlueprint.findFirst({
+      where: { id: ownedBlueprintId, character: { userId } },
+    });
+    if (!bp) throw new Error("Blueprint not found");
+    await prisma.buildPlanBlueprint.upsert({
+      where: { planId_typeId: { planId, typeId: productTypeId } },
+      update: { ownedBlueprintId },
+      create: { planId, typeId: productTypeId, ownedBlueprintId },
+    });
+  }
+  revalidatePath(`/plans/${planId}`);
+}
+
 export async function searchBuildableTypes(query: string) {
   if (query.trim().length < 2) return [];
   return prisma.sdeType.findMany({

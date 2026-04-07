@@ -33,11 +33,11 @@ export default async function PlanDetailPage({ params }: { params: Promise<{ id:
   const productTypeIds = plan.items.map((i) => i.typeId);
 
   // ── Blueprint data map ────────────────────────────────────────────────────
-  // Maps a product typeId → { outputQty, materials[] }
+  // Maps a product typeId → { blueprintTypeId, outputQty, materials[] }
   // Populated iteratively for up to MAX_MATERIAL_DEPTH levels.
   const bpDataByTypeId = new Map<
     number,
-    { outputQty: number; materials: Array<{ typeId: number; typeName: string; quantity: number }> }
+    { blueprintTypeId: number; outputQty: number; materials: Array<{ typeId: number; typeName: string; quantity: number }> }
   >();
 
   // We also need baseTime / blueprintTypeId for plan items (for est. time display, not used here
@@ -78,7 +78,7 @@ export default async function PlanDetailPage({ params }: { params: Promise<{ id:
         typeNameMap.set(m.typeId, m.type.name);
         return { typeId: m.typeId, typeName: m.type.name, quantity: m.quantity };
       });
-      bpDataByTypeId.set(prod.typeId, { outputQty: prod.quantity, materials: mats });
+      bpDataByTypeId.set(prod.typeId, { blueprintTypeId: act.blueprintId, outputQty: prod.quantity, materials: mats });
     }
   }
 
@@ -101,6 +101,10 @@ export default async function PlanDetailPage({ params }: { params: Promise<{ id:
   }
   // Mutable copy consumed during tree traversal — stockpile "spent" as materials are matched
   const stockpileRemaining = new Map(stockpileByTypeId);
+
+  // ── Blueprint selections + owned blueprints ───────────────────────────────
+  // Loaded after bpDataByTypeId is fully populated so we know all relevant blueprint typeIds.
+  // (These fetches happen after the iterative depth loop below; deferred intentionally.)
 
   // ── Levels 2 → MAX_MATERIAL_DEPTH: iterative fetch ───────────────────────
   // We fetch blueprint data for ALL materials at each level so we know canBuild,
@@ -138,11 +142,56 @@ export default async function PlanDetailPage({ params }: { params: Promise<{ id:
           typeNameMap.set(m.typeId, m.type.name);
           return { typeId: m.typeId, typeName: m.type.name, quantity: m.quantity };
         });
-        bpDataByTypeId.set(prod.typeId, { outputQty: prod.quantity, materials: mats });
+        bpDataByTypeId.set(prod.typeId, { blueprintTypeId: act.blueprintId, outputQty: prod.quantity, materials: mats });
         nextFrontier.push(...act.materials.map((m) => m.typeId));
       }
     }
     frontier = [...new Set(nextFrontier)];
+  }
+
+  // ── Owned blueprints + plan blueprint selections ──────────────────────────
+  // Collect all blueprint typeIds (not product typeIds) for which we have data.
+  const allBlueprintTypeIds = [...new Set([...bpDataByTypeId.values()].map((v) => v.blueprintTypeId))];
+
+  const [planBpSelections, ownedBpRows] = await Promise.all([
+    prisma.buildPlanBlueprint.findMany({
+      where: { planId: plan.id },
+      include: { ownedBlueprint: true },
+    }),
+    allBlueprintTypeIds.length
+      ? prisma.ownedBlueprint.findMany({
+          where: { typeId: { in: allBlueprintTypeIds }, character: { userId: session.user.id } },
+          include: { character: { select: { characterName: true } } },
+          orderBy: [{ materialEfficiency: "desc" }, { timeEfficiency: "desc" }],
+        })
+      : Promise.resolve([]),
+  ]);
+
+  // planBlueprintByProductTypeId: productTypeId → { ownedBlueprintId, me, te }
+  const planBlueprintByProductTypeId = new Map(
+    planBpSelections.map((s) => [
+      s.typeId,
+      { ownedBlueprintId: s.ownedBlueprintId, me: s.ownedBlueprint.materialEfficiency, te: s.ownedBlueprint.timeEfficiency },
+    ]),
+  );
+
+  // ownedBlueprintsByBpTypeId: blueprintTypeId → BlueprintOption[]
+  // BlueprintOption is defined in PlanDetailBody; build a compatible shape here.
+  const ownedBlueprintsByBpTypeId = new Map<
+    number,
+    Array<{ id: string; me: number; te: number; runs: number; isBpo: boolean; characterName: string }>
+  >();
+  for (const bp of ownedBpRows) {
+    const list = ownedBlueprintsByBpTypeId.get(bp.typeId) ?? [];
+    list.push({
+      id: bp.id,
+      me: bp.materialEfficiency,
+      te: bp.timeEfficiency,
+      runs: bp.runs,
+      isBpo: bp.runs === -1,
+      characterName: bp.character.characterName,
+    });
+    ownedBlueprintsByBpTypeId.set(bp.typeId, list);
   }
 
   // ── Recursive material tree builder ──────────────────────────────────────
@@ -159,16 +208,24 @@ export default async function PlanDetailPage({ params }: { params: Promise<{ id:
     if (stockpileCovered > 0) stockpileRemaining.set(typeId, available - stockpileCovered);
     const effectiveQty = totalQty - stockpileCovered;
 
-    // Only recurse for the quantity not covered by stockpile
+    // Blueprint options and selected blueprint for this node
+    const blueprintTypeId = bpData?.blueprintTypeId;
+    const blueprintOptions = blueprintTypeId ? (ownedBlueprintsByBpTypeId.get(blueprintTypeId) ?? []) : [];
+    const selectedBp = planBlueprintByProductTypeId.get(typeId);
+    const selectedBlueprintId = selectedBp?.ownedBlueprintId ?? null;
+    const meLevel = selectedBp?.me ?? 0;
+
+    // Only recurse for the quantity not covered by stockpile; apply ME to sub-material quantities
     let subMaterials: Material[] = [];
     if (decision === "build" && bpData && depth < MAX_MATERIAL_DEPTH && effectiveQty > 0) {
       const runsNeeded = Math.ceil(effectiveQty / bpData.outputQty);
-      subMaterials = bpData.materials.map((mat) =>
-        buildMaterials(mat.typeId, mat.quantity * runsNeeded, depth + 1),
-      );
+      subMaterials = bpData.materials.map((mat) => {
+        const adjQtyPerRun = meLevel > 0 ? Math.max(1, Math.ceil(mat.quantity * (1 - meLevel / 100))) : mat.quantity;
+        return buildMaterials(mat.typeId, adjQtyPerRun * runsNeeded, depth + 1);
+      });
     }
 
-    return { typeId, typeName, quantity: totalQty, effectiveQty, stockpileCovered, decision, canBuild, subMaterials };
+    return { typeId, typeName, quantity: totalQty, effectiveQty, stockpileCovered, decision, canBuild, subMaterials, blueprintOptions, selectedBlueprintId };
   }
 
   // ── Recursive item collector ─────────────────────────────────────────────
@@ -216,17 +273,27 @@ export default async function PlanDetailPage({ params }: { params: Promise<{ id:
     const runsNeeded = bpInfo && remaining > 0 ? Math.ceil(remaining / bpInfo.outputQty) : 0;
     const rawMaterials = bpInfo ? (bpDataByTypeId.get(item.typeId)?.materials ?? []) : [];
 
-    const materials = rawMaterials.map((mat) =>
-      buildMaterials(mat.typeId, mat.quantity * runsNeeded, 1),
-    );
+    // Blueprint selection for this plan item (ME reduces the item's direct materials)
+    const selectedBp = planBlueprintByProductTypeId.get(item.typeId);
+    const meLevel = selectedBp?.me ?? 0;
+    const blueprintTypeId = bpInfo?.blueprintTypeId;
+    const blueprintOptions = blueprintTypeId ? (ownedBlueprintsByBpTypeId.get(blueprintTypeId) ?? []) : [];
+
+    const materials = rawMaterials.map((mat) => {
+      const adjQtyPerRun = meLevel > 0 ? Math.max(1, Math.ceil(mat.quantity * (1 - meLevel / 100))) : mat.quantity;
+      return buildMaterials(mat.typeId, adjQtyPerRun * runsNeeded, 1);
+    });
 
     return {
       itemId: item.id,
+      typeId: item.typeId,
       typeName: item.type.name,
       quantity: item.quantity,
       completedQuantity: item.completedQuantity,
       runsNeeded,
       materials,
+      blueprintOptions,
+      selectedBlueprintId: selectedBp?.ownedBlueprintId ?? null,
     };
   });
 

@@ -1,8 +1,17 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { setPlanDecision, removePlanItem } from "../actions/build-plans";
+import { setPlanDecision, removePlanItem, setPlanBlueprint } from "../actions/build-plans";
 import PlanItemProgress from "./PlanItemProgress";
+
+export interface BlueprintOption {
+  id: string;
+  me: number;
+  te: number;
+  runs: number;      // -1 = BPO (unlimited runs)
+  isBpo: boolean;
+  characterName: string;
+}
 
 export interface Material {
   typeId: number;
@@ -13,15 +22,20 @@ export interface Material {
   decision: "buy" | "build" | "gather";
   canBuild: boolean;      // true if a manufacturing or reaction blueprint exists in the SDE
   subMaterials: Material[];
+  blueprintOptions: BlueprintOption[];   // owned blueprints that can produce this type
+  selectedBlueprintId: string | null;    // currently selected owned blueprint
 }
 
 export interface PlanItemWithMaterials {
   itemId: string;
+  typeId: number;
   typeName: string;
   quantity: number;
   completedQuantity: number;
   runsNeeded: number;
   materials: Material[];
+  blueprintOptions: BlueprintOption[];
+  selectedBlueprintId: string | null;
 }
 
 export interface ShoppingEntry {
@@ -87,6 +101,63 @@ function DecisionToggle({
   );
 }
 
+// ── Blueprint picker ─────────────────────────────────────────────────────────
+
+function BlueprintPicker({
+  planId,
+  typeId,
+  options,
+  selectedId,
+}: {
+  planId: string;
+  typeId: number;
+  options: BlueprintOption[];
+  selectedId: string | null;
+}) {
+  const [pending, startTransition] = useTransition();
+
+  if (options.length === 0) {
+    return (
+      <span className="text-xs shrink-0" style={{ color: "var(--muted-fg)", opacity: 0.4 }}>
+        no owned BP
+      </span>
+    );
+  }
+
+  const selectedMe = options.find((o) => o.id === selectedId)?.me ?? 0;
+
+  return (
+    <div className="flex items-center gap-1 shrink-0">
+      <select
+        value={selectedId ?? ""}
+        disabled={pending}
+        onChange={(e) => {
+          const val = e.target.value || null;
+          startTransition(() => setPlanBlueprint(planId, typeId, val));
+        }}
+        className="text-xs px-1.5 py-0.5 rounded border cursor-pointer transition-opacity disabled:opacity-40"
+        style={{
+          background: "var(--background)",
+          borderColor: selectedId ? "var(--accent)" : "var(--border)",
+          color: selectedId ? "var(--accent)" : "var(--muted-fg)",
+        }}
+      >
+        <option value="">ME 0</option>
+        {options.map((bp) => (
+          <option key={bp.id} value={bp.id}>
+            ME {bp.me} TE {bp.te} — {bp.isBpo ? "BPO" : `BPC ×${bp.runs}`} ({bp.characterName})
+          </option>
+        ))}
+      </select>
+      {selectedId && selectedMe > 0 && (
+        <span className="text-xs tabular-nums shrink-0" style={{ color: "var(--accent)", opacity: 0.7 }}>
+          −{selectedMe}%
+        </span>
+      )}
+    </div>
+  );
+}
+
 // ── Recursive material rows ───────────────────────────────────────────────────
 
 function MaterialRows({
@@ -120,6 +191,14 @@ function MaterialRows({
               decision={mat.decision}
               canBuild={mat.canBuild}
             />
+            {mat.decision === "build" && mat.canBuild && (
+              <BlueprintPicker
+                planId={planId}
+                typeId={mat.typeId}
+                options={mat.blueprintOptions}
+                selectedId={mat.selectedBlueprintId}
+              />
+            )}
             <span
               className="text-xs flex-1 min-w-0 truncate"
               style={{ color: depth === 0 ? "var(--foreground)" : "var(--muted-fg)" }}
@@ -296,6 +375,15 @@ export default function PlanDetailBody({ planId, items, shopping, gather }: Prop
                     </span>
                   )}
                 </button>
+
+                {item.blueprintOptions.length > 0 || item.materials.length > 0 ? (
+                  <BlueprintPicker
+                    planId={planId}
+                    typeId={item.typeId}
+                    options={item.blueprintOptions}
+                    selectedId={item.selectedBlueprintId}
+                  />
+                ) : null}
 
                 <div className="w-16 shrink-0">
                   <PlanItemProgress
