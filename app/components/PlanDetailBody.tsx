@@ -7,7 +7,9 @@ import PlanItemProgress from "./PlanItemProgress";
 export interface Material {
   typeId: number;
   typeName: string;
-  quantity: number;       // total needed (already × runs)
+  quantity: number;          // total needed (already × runs, before stockpile)
+  effectiveQty: number;      // still needed after stockpile coverage
+  stockpileCovered: number;  // how much the stockpile covers
   decision: "buy" | "build" | "gather";
   canBuild: boolean;      // true if a manufacturing or reaction blueprint exists in the SDE
   subMaterials: Material[];
@@ -25,8 +27,8 @@ export interface PlanItemWithMaterials {
 export interface ShoppingEntry {
   typeId: number;
   typeName: string;
-  quantity: number;
-  allocated: number;  // assigned from inventory
+  quantity: number;          // total needed (before stockpile)
+  stockpileCovered: number;  // covered by stockpile
 }
 
 interface Props {
@@ -109,6 +111,7 @@ function MaterialRows({
               paddingLeft: `${paddingLeft}px`,
               borderColor: "var(--border)",
               background: depth > 0 ? `rgba(0,0,0,${bgAlpha})` : undefined,
+              opacity: mat.effectiveQty === 0 ? 0.45 : 1,
             }}
           >
             <DecisionToggle
@@ -123,9 +126,18 @@ function MaterialRows({
             >
               {mat.typeName}
             </span>
-            <span className="text-xs tabular-nums shrink-0" style={{ color: "var(--muted-fg)" }}>
-              {mat.quantity.toLocaleString()}
-            </span>
+            {mat.effectiveQty === 0 ? (
+              <span className="text-xs tabular-nums shrink-0" style={{ color: "var(--accent)" }}>✓</span>
+            ) : (
+              <span className="text-xs tabular-nums shrink-0 flex items-center gap-1.5">
+                <span style={{ color: "var(--muted-fg)" }}>{mat.effectiveQty.toLocaleString()}</span>
+                {mat.stockpileCovered > 0 && (
+                  <span style={{ color: "var(--accent)", opacity: 0.7 }}>
+                    (−{mat.stockpileCovered.toLocaleString()} stocked)
+                  </span>
+                )}
+              </span>
+            )}
           </div>
 
           {mat.decision === "build" && mat.subMaterials.length > 0 && (
@@ -195,10 +207,10 @@ function SidePanel({
         ) : (
           <div className="divide-y" style={{ borderColor: "var(--border)" }}>
             {entries.map((entry) => {
-              const stillNeeded = Math.max(0, entry.quantity - entry.allocated);
-              const covered = entry.allocated >= entry.quantity;
+              const stillNeeded = Math.max(0, entry.quantity - entry.stockpileCovered);
+              const covered = stillNeeded === 0;
               return (
-                <div key={entry.typeId} className="px-4 py-2 flex flex-col gap-0.5">
+                <div key={entry.typeId} className="px-4 py-2 flex flex-col gap-0.5" style={{ opacity: covered ? 0.5 : 1 }}>
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-xs truncate min-w-0" style={{ color: "var(--foreground)" }}>
                       {entry.typeName}
@@ -210,17 +222,17 @@ function SidePanel({
                       {covered ? "✓" : stillNeeded.toLocaleString()}
                     </span>
                   </div>
-                  {entry.allocated > 0 && (
+                  {entry.stockpileCovered > 0 && (
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-xs" style={{ color: "var(--muted-fg)" }}>
                         {entry.quantity.toLocaleString()} needed
                       </span>
                       <span className="text-xs tabular-nums" style={{ color: "var(--accent)", opacity: 0.6 }}>
-                        −{Math.min(entry.allocated, entry.quantity).toLocaleString()} allocated
+                        −{Math.min(entry.stockpileCovered, entry.quantity).toLocaleString()} in stockpile
                       </span>
                     </div>
                   )}
-                  {!entry.allocated && (
+                  {!entry.stockpileCovered && (
                     <span className="text-xs tabular-nums" style={{ color: "var(--muted-fg)" }}>
                       {entry.quantity.toLocaleString()} needed
                     </span>

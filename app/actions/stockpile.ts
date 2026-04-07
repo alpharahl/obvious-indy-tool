@@ -80,17 +80,19 @@ export async function saveStockpile(
 
   const typeMap = new Map(matchedTypes.map((t) => [t.name.toLowerCase(), t]));
 
-  const matched: Array<{ typeId: number; quantity: number }> = [];
+  const matchedMap = new Map<number, number>();
   const unmatched: string[] = [];
 
   for (const item of parsed) {
     const found = typeMap.get(item.name.toLowerCase());
     if (found) {
-      matched.push({ typeId: found.id, quantity: item.quantity });
+      matchedMap.set(found.id, (matchedMap.get(found.id) ?? 0) + item.quantity);
     } else {
       unmatched.push(item.name);
     }
   }
+
+  const matched = [...matchedMap.entries()].map(([typeId, quantity]) => ({ typeId, quantity }));
 
   // Upsert stockpile: if one exists for this user+name, replace its items
   const existing = await prisma.stockpile.findFirst({

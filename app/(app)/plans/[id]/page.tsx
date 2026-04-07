@@ -82,13 +82,25 @@ export default async function PlanDetailPage({ params }: { params: Promise<{ id:
     }
   }
 
-  // ── Decisions ─────────────────────────────────────────────────────────────
-  const [decisions, allocations] = await Promise.all([
+  // ── Decisions + stockpile ─────────────────────────────────────────────────
+  const [decisions, stockpiles] = await Promise.all([
     prisma.buildPlanDecision.findMany({ where: { planId: plan.id } }),
-    prisma.buildPlanAllocation.findMany({ where: { planId: plan.id } }),
+    prisma.stockpile.findMany({
+      where: { userId: session.user.id },
+      include: { items: true },
+    }),
   ]);
   const decisionMap = new Map(decisions.map((d) => [d.typeId, d.decision as "buy" | "build" | "gather"]));
-  const allocationMap = new Map(allocations.map((a) => [a.typeId, a.quantity]));
+
+  // Aggregate all stockpile quantities by typeId
+  const stockpileByTypeId = new Map<number, number>();
+  for (const sp of stockpiles) {
+    for (const item of sp.items) {
+      stockpileByTypeId.set(item.typeId, (stockpileByTypeId.get(item.typeId) ?? 0) + item.quantity);
+    }
+  }
+  // Mutable copy consumed during tree traversal — stockpile "spent" as materials are matched
+  const stockpileRemaining = new Map(stockpileByTypeId);
 
   // ── Levels 2 → MAX_MATERIAL_DEPTH: iterative fetch ───────────────────────
   // We fetch blueprint data for ALL materials at each level so we know canBuild,
@@ -134,21 +146,29 @@ export default async function PlanDetailPage({ params }: { params: Promise<{ id:
   }
 
   // ── Recursive material tree builder ──────────────────────────────────────
+  // Consumes from stockpileRemaining at each node so stockpile isn't double-counted.
   function buildMaterials(typeId: number, totalQty: number, depth: number): Material {
     const decision = (decisionMap.get(typeId) ?? "buy") as "buy" | "build" | "gather";
     const bpData = bpDataByTypeId.get(typeId);
     const canBuild = !!bpData;
     const typeName = typeNameMap.get(typeId) ?? String(typeId);
 
+    // Consume from stockpile
+    const available = stockpileRemaining.get(typeId) ?? 0;
+    const stockpileCovered = Math.min(available, totalQty);
+    if (stockpileCovered > 0) stockpileRemaining.set(typeId, available - stockpileCovered);
+    const effectiveQty = totalQty - stockpileCovered;
+
+    // Only recurse for the quantity not covered by stockpile
     let subMaterials: Material[] = [];
-    if (decision === "build" && bpData && depth < MAX_MATERIAL_DEPTH) {
-      const runsNeeded = totalQty > 0 ? Math.ceil(totalQty / bpData.outputQty) : 0;
+    if (decision === "build" && bpData && depth < MAX_MATERIAL_DEPTH && effectiveQty > 0) {
+      const runsNeeded = Math.ceil(effectiveQty / bpData.outputQty);
       subMaterials = bpData.materials.map((mat) =>
         buildMaterials(mat.typeId, mat.quantity * runsNeeded, depth + 1),
       );
     }
 
-    return { typeId, typeName, quantity: totalQty, decision, canBuild, subMaterials };
+    return { typeId, typeName, quantity: totalQty, effectiveQty, stockpileCovered, decision, canBuild, subMaterials };
   }
 
   // ── Recursive item collector ─────────────────────────────────────────────
@@ -156,20 +176,35 @@ export default async function PlanDetailPage({ params }: { params: Promise<{ id:
   // Falls through to the appropriate map otherwise:
   //   "gather"  → gatherMap  (base resources: mine, do PI, etc.)
   //   anything else ("buy", no blueprint, depth limit) → buyMap
+  // "build" nodes fully covered by stockpile (effectiveQty=0, subMaterials=[]) are skipped.
+  type LeafValue = { typeName: string; quantity: number; stockpileCovered: number };
   function collectItems(
     materials: Material[],
-    buyMap: Map<number, { typeName: string; quantity: number }>,
-    gatherMap: Map<number, { typeName: string; quantity: number }>,
+    buyMap: Map<number, LeafValue>,
+    gatherMap: Map<number, LeafValue>,
   ) {
     for (const mat of materials) {
       if (mat.decision === "build" && mat.subMaterials.length > 0) {
+        // Build node expanded: recurse (sub-materials are already scaled by effectiveQty)
         collectItems(mat.subMaterials, buyMap, gatherMap);
+      } else if (mat.decision === "build" && mat.effectiveQty === 0) {
+        // Build node fully covered by stockpile — nothing left to source
+        continue;
       } else if (mat.decision === "gather") {
         const prev = gatherMap.get(mat.typeId);
-        gatherMap.set(mat.typeId, { typeName: mat.typeName, quantity: (prev?.quantity ?? 0) + mat.quantity });
+        gatherMap.set(mat.typeId, {
+          typeName: mat.typeName,
+          quantity: (prev?.quantity ?? 0) + mat.quantity,
+          stockpileCovered: (prev?.stockpileCovered ?? 0) + mat.stockpileCovered,
+        });
       } else {
+        // "buy" or "build" with no blueprint
         const prev = buyMap.get(mat.typeId);
-        buyMap.set(mat.typeId, { typeName: mat.typeName, quantity: (prev?.quantity ?? 0) + mat.quantity });
+        buyMap.set(mat.typeId, {
+          typeName: mat.typeName,
+          quantity: (prev?.quantity ?? 0) + mat.quantity,
+          stockpileCovered: (prev?.stockpileCovered ?? 0) + mat.stockpileCovered,
+        });
       }
     }
   }
@@ -196,18 +231,18 @@ export default async function PlanDetailPage({ params }: { params: Promise<{ id:
   });
 
   // ── Buy / gather lists ────────────────────────────────────────────────────
-  const buyMap = new Map<number, { typeName: string; quantity: number }>();
-  const gatherMap = new Map<number, { typeName: string; quantity: number }>();
+  const buyMap = new Map<number, { typeName: string; quantity: number; stockpileCovered: number }>();
+  const gatherMap = new Map<number, { typeName: string; quantity: number; stockpileCovered: number }>();
   for (const item of itemMaterials) {
     collectItems(item.materials, buyMap, gatherMap);
   }
-  const toEntries = (map: Map<number, { typeName: string; quantity: number }>): ShoppingEntry[] =>
+  const toEntries = (map: Map<number, { typeName: string; quantity: number; stockpileCovered: number }>): ShoppingEntry[] =>
     [...map.entries()]
-      .map(([typeId, { typeName, quantity }]) => ({
+      .map(([typeId, { typeName, quantity, stockpileCovered }]) => ({
         typeId,
         typeName,
         quantity,
-        allocated: allocationMap.get(typeId) ?? 0,
+        stockpileCovered,
       }))
       .sort((a, b) => a.typeName.localeCompare(b.typeName));
 
