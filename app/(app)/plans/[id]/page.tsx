@@ -5,6 +5,7 @@ import { notFound, redirect } from "next/navigation";
 import { auth } from "../../../../auth";
 import { prisma } from "../../../../lib/prisma";
 import PlanItemSearch from "../../../components/PlanItemSearch";
+import FacilityPicker from "../../../components/FacilityPicker";
 import PlanDetailBody, {
   type Material,
   type PlanItemWithMaterials,
@@ -102,6 +103,9 @@ export default async function PlanDetailPage({ params }: { params: Promise<{ id:
   // Mutable copy consumed during tree traversal — stockpile "spent" as materials are matched
   const stockpileRemaining = new Map(stockpileByTypeId);
 
+  // Facility ME bonus (e.g. 2.0 = 2% reduction applied on top of blueprint ME)
+  const facilityMe = plan.facilityMe;
+
   // ── Blueprint selections + owned blueprints ───────────────────────────────
   // Loaded after bpDataByTypeId is fully populated so we know all relevant blueprint typeIds.
   // (These fetches happen after the iterative depth loop below; deferred intentionally.)
@@ -167,13 +171,36 @@ export default async function PlanDetailPage({ params }: { params: Promise<{ id:
       : Promise.resolve([]),
   ]);
 
-  // planBlueprintByProductTypeId: productTypeId → { ownedBlueprintId, me, te }
-  const planBlueprintByProductTypeId = new Map(
-    planBpSelections.map((s) => [
-      s.typeId,
-      { ownedBlueprintId: s.ownedBlueprintId, me: s.ownedBlueprint.materialEfficiency, te: s.ownedBlueprint.timeEfficiency },
-    ]),
-  );
+  // planBlueprintByProductTypeId: productTypeId → Array<{ ownedBlueprintId, me, te, runs }>
+  // Multiple blueprints per product are supported (different ME/runs per entry).
+  const planBlueprintByProductTypeId = new Map<number, Array<{ ownedBlueprintId: string; me: number; te: number; runs: number }>>();
+  for (const s of planBpSelections) {
+    const list = planBlueprintByProductTypeId.get(s.typeId) ?? [];
+    list.push({
+      ownedBlueprintId: s.ownedBlueprintId,
+      me: s.ownedBlueprint.materialEfficiency,
+      te: s.ownedBlueprint.timeEfficiency,
+      runs: s.runs,
+    });
+    planBlueprintByProductTypeId.set(s.typeId, list);
+  }
+
+  // Distribute totalRuns across blueprint selections (in order); remainder at ME 0.
+  function computeAllocations(
+    selections: Array<{ me: number; runs: number }>,
+    totalRuns: number,
+  ): Array<{ me: number; runs: number }> {
+    let remaining = totalRuns;
+    const allocs: Array<{ me: number; runs: number }> = [];
+    for (const sel of selections) {
+      const used = Math.min(sel.runs, remaining);
+      if (used > 0) allocs.push({ me: sel.me, runs: used });
+      remaining -= used;
+      if (remaining <= 0) break;
+    }
+    if (remaining > 0) allocs.push({ me: 0, runs: remaining });
+    return allocs;
+  }
 
   // ownedBlueprintsByBpTypeId: blueprintTypeId → BlueprintOption[]
   // BlueprintOption is defined in PlanDetailBody; build a compatible shape here.
@@ -208,24 +235,28 @@ export default async function PlanDetailPage({ params }: { params: Promise<{ id:
     if (stockpileCovered > 0) stockpileRemaining.set(typeId, available - stockpileCovered);
     const effectiveQty = totalQty - stockpileCovered;
 
-    // Blueprint options and selected blueprint for this node
+    // Blueprint options and selections for this node
     const blueprintTypeId = bpData?.blueprintTypeId;
     const blueprintOptions = blueprintTypeId ? (ownedBlueprintsByBpTypeId.get(blueprintTypeId) ?? []) : [];
-    const selectedBp = planBlueprintByProductTypeId.get(typeId);
-    const selectedBlueprintId = selectedBp?.ownedBlueprintId ?? null;
-    const meLevel = selectedBp?.me ?? 0;
+    const bpSelections = planBlueprintByProductTypeId.get(typeId) ?? [];
+    const selectedBlueprints = bpSelections.map((s) => ({ blueprintId: s.ownedBlueprintId, runs: s.runs }));
 
-    // Only recurse for the quantity not covered by stockpile; apply ME to sub-material quantities
+    // Only recurse for the quantity not covered by stockpile; apply per-blueprint ME to sub-material quantities
     let subMaterials: Material[] = [];
     if (decision === "build" && bpData && depth < MAX_MATERIAL_DEPTH && effectiveQty > 0) {
-      const runsNeeded = Math.ceil(effectiveQty / bpData.outputQty);
+      const totalRuns = Math.ceil(effectiveQty / bpData.outputQty);
+      const allocations = computeAllocations(bpSelections, totalRuns);
       subMaterials = bpData.materials.map((mat) => {
-        const adjQtyPerRun = meLevel > 0 ? Math.max(1, Math.ceil(mat.quantity * (1 - meLevel / 100))) : mat.quantity;
-        return buildMaterials(mat.typeId, adjQtyPerRun * runsNeeded, depth + 1);
+        const adjTotal = allocations.reduce((sum, { me, runs }) => {
+          const modifier = (1 - me / 100) * (1 - facilityMe / 100);
+          const perRun = modifier < 1 ? Math.max(1, Math.ceil(mat.quantity * modifier)) : mat.quantity;
+          return sum + perRun * runs;
+        }, 0);
+        return buildMaterials(mat.typeId, adjTotal, depth + 1);
       });
     }
 
-    return { typeId, typeName, quantity: totalQty, effectiveQty, stockpileCovered, decision, canBuild, subMaterials, blueprintOptions, selectedBlueprintId };
+    return { typeId, typeName, quantity: totalQty, effectiveQty, stockpileCovered, decision, canBuild, subMaterials, blueprintOptions, selectedBlueprints };
   }
 
   // ── Recursive item collector ─────────────────────────────────────────────
@@ -273,15 +304,19 @@ export default async function PlanDetailPage({ params }: { params: Promise<{ id:
     const runsNeeded = bpInfo && remaining > 0 ? Math.ceil(remaining / bpInfo.outputQty) : 0;
     const rawMaterials = bpInfo ? (bpDataByTypeId.get(item.typeId)?.materials ?? []) : [];
 
-    // Blueprint selection for this plan item (ME reduces the item's direct materials)
-    const selectedBp = planBlueprintByProductTypeId.get(item.typeId);
-    const meLevel = selectedBp?.me ?? 0;
+    // Blueprint selections for this plan item (ME reduces the item's direct materials)
+    const bpSelections = planBlueprintByProductTypeId.get(item.typeId) ?? [];
     const blueprintTypeId = bpInfo?.blueprintTypeId;
     const blueprintOptions = blueprintTypeId ? (ownedBlueprintsByBpTypeId.get(blueprintTypeId) ?? []) : [];
 
+    const allocations = computeAllocations(bpSelections, runsNeeded);
     const materials = rawMaterials.map((mat) => {
-      const adjQtyPerRun = meLevel > 0 ? Math.max(1, Math.ceil(mat.quantity * (1 - meLevel / 100))) : mat.quantity;
-      return buildMaterials(mat.typeId, adjQtyPerRun * runsNeeded, 1);
+      const adjTotal = allocations.reduce((sum, { me, runs }) => {
+        const modifier = (1 - me / 100) * (1 - facilityMe / 100);
+        const perRun = modifier < 1 ? Math.max(1, Math.ceil(mat.quantity * modifier)) : mat.quantity;
+        return sum + perRun * runs;
+      }, 0);
+      return buildMaterials(mat.typeId, adjTotal, 1);
     });
 
     return {
@@ -293,7 +328,7 @@ export default async function PlanDetailPage({ params }: { params: Promise<{ id:
       runsNeeded,
       materials,
       blueprintOptions,
-      selectedBlueprintId: selectedBp?.ownedBlueprintId ?? null,
+      selectedBlueprints: bpSelections.map((s) => ({ blueprintId: s.ownedBlueprintId, runs: s.runs })),
     };
   });
 
@@ -351,6 +386,13 @@ export default async function PlanDetailPage({ params }: { params: Promise<{ id:
         </span>
         <PlanItemSearch planId={plan.id} />
       </div>
+
+      {/* Facility */}
+      <FacilityPicker
+        planId={plan.id}
+        initialName={plan.facilityName ?? ""}
+        initialMe={plan.facilityMe}
+      />
 
       {/* Body: materials + shopping list */}
       {plan.items.length === 0 ? (

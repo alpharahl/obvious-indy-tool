@@ -153,7 +153,10 @@ function PlanAccordion({ plan }: { plan: InventoryPlanEntry }) {
                   <span className="truncate" style={{ color: "var(--foreground)" }}>
                     {mat.typeName}
                   </span>
-                  <span className="tabular-nums text-right" style={{ color: "var(--muted-fg)" }}>
+                  <span
+                    className="tabular-nums text-right"
+                    style={{ color: mat.available >= mat.needed ? "var(--accent)" : "var(--muted-fg)" }}
+                  >
                     {mat.needed.toLocaleString()}
                   </span>
                   <span

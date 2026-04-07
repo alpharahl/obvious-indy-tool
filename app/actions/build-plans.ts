@@ -102,22 +102,34 @@ export async function setPlanAllocation(planId: string, typeId: number, quantity
   revalidatePath(`/plans/${planId}`);
 }
 
-export async function setPlanBlueprint(planId: string, productTypeId: number, ownedBlueprintId: string | null) {
+export async function setPlanFacility(planId: string, facilityName: string, facilityMe: number) {
+  const userId = await requireUserId();
+  await prisma.buildPlan.updateMany({
+    where: { id: planId, userId },
+    data: {
+      facilityName: facilityName || null,
+      facilityMe: Math.max(0, facilityMe),
+    },
+  });
+  revalidatePath(`/plans/${planId}`);
+}
+
+export async function setPlanBlueprint(planId: string, productTypeId: number, ownedBlueprintId: string, runs: number) {
   const userId = await requireUserId();
   const plan = await prisma.buildPlan.findFirst({ where: { id: planId, userId } });
   if (!plan) throw new Error("Plan not found");
 
-  if (!ownedBlueprintId) {
-    await prisma.buildPlanBlueprint.deleteMany({ where: { planId, typeId: productTypeId } });
+  if (runs <= 0) {
+    await prisma.buildPlanBlueprint.deleteMany({ where: { planId, typeId: productTypeId, ownedBlueprintId } });
   } else {
     const bp = await prisma.ownedBlueprint.findFirst({
       where: { id: ownedBlueprintId, character: { userId } },
     });
     if (!bp) throw new Error("Blueprint not found");
     await prisma.buildPlanBlueprint.upsert({
-      where: { planId_typeId: { planId, typeId: productTypeId } },
-      update: { ownedBlueprintId },
-      create: { planId, typeId: productTypeId, ownedBlueprintId },
+      where: { planId_typeId_ownedBlueprintId: { planId, typeId: productTypeId, ownedBlueprintId } },
+      update: { runs },
+      create: { planId, typeId: productTypeId, ownedBlueprintId, runs },
     });
   }
   revalidatePath(`/plans/${planId}`);

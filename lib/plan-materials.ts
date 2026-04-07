@@ -14,8 +14,24 @@ export interface PlanMaterialEntry {
 }
 
 interface BpData {
+  blueprintTypeId: number;
   outputQty: number;
   materials: Array<{ typeId: number; typeName: string; quantity: number }>;
+}
+
+type BpSelection = { me: number; runs: number };
+
+function computeAllocations(selections: BpSelection[], totalRuns: number): BpSelection[] {
+  let remaining = totalRuns;
+  const allocs: BpSelection[] = [];
+  for (const sel of selections) {
+    const used = Math.min(sel.runs, remaining);
+    if (used > 0) allocs.push({ me: sel.me, runs: used });
+    remaining -= used;
+    if (remaining <= 0) break;
+  }
+  if (remaining > 0) allocs.push({ me: 0, runs: remaining });
+  return allocs;
 }
 
 interface RawMaterial {
@@ -34,6 +50,8 @@ function buildTree(
   typeNameMap: Map<number, string>,
   bpDataByTypeId: Map<number, BpData>,
   decisionMap: Map<number, string>,
+  planBlueprintMap: Map<number, BpSelection[]>,
+  facilityMe: number,
 ): RawMaterial {
   const decision = (decisionMap.get(typeId) ?? "buy") as "buy" | "build" | "gather";
   const bpData = bpDataByTypeId.get(typeId);
@@ -41,11 +59,17 @@ function buildTree(
   const typeName = typeNameMap.get(typeId) ?? String(typeId);
 
   let subMaterials: RawMaterial[] = [];
-  if (decision === "build" && bpData && depth < MAX_MATERIAL_DEPTH) {
-    const runsNeeded = totalQty > 0 ? Math.ceil(totalQty / bpData.outputQty) : 0;
-    subMaterials = bpData.materials.map((mat) =>
-      buildTree(mat.typeId, mat.quantity * runsNeeded, depth + 1, typeNameMap, bpDataByTypeId, decisionMap),
-    );
+  if (decision === "build" && bpData && depth < MAX_MATERIAL_DEPTH && totalQty > 0) {
+    const totalRuns = Math.ceil(totalQty / bpData.outputQty);
+    const allocations = computeAllocations(planBlueprintMap.get(typeId) ?? [], totalRuns);
+    subMaterials = bpData.materials.map((mat) => {
+      const adjTotal = allocations.reduce((sum, { me, runs }) => {
+        const modifier = (1 - me / 100) * (1 - facilityMe / 100);
+        const perRun = modifier < 1 ? Math.max(1, Math.ceil(mat.quantity * modifier)) : mat.quantity;
+        return sum + perRun * runs;
+      }, 0);
+      return buildTree(mat.typeId, adjTotal, depth + 1, typeNameMap, bpDataByTypeId, decisionMap, planBlueprintMap, facilityMe);
+    });
   }
 
   return { typeId, typeName, quantity: totalQty, decision, canBuild, subMaterials };
@@ -75,6 +99,7 @@ export async function computePlanMaterials(planId: string): Promise<PlanMaterial
     include: {
       items: { include: { type: { select: { name: true } } } },
       decisions: true,
+      blueprintSelections: { include: { ownedBlueprint: true } },
     },
   });
   if (!plan) return [];
@@ -99,11 +124,12 @@ export async function computePlanMaterials(planId: string): Promise<PlanMaterial
     },
   });
 
-  const bpInfoByProductTypeId = new Map<number, { outputQty: number }>();
+  const bpInfoByProductTypeId = new Map<number, { blueprintTypeId: number; outputQty: number }>();
   for (const act of mfgActivities) {
     for (const prod of act.products) {
-      bpInfoByProductTypeId.set(prod.typeId, { outputQty: prod.quantity });
+      bpInfoByProductTypeId.set(prod.typeId, { blueprintTypeId: act.blueprintId, outputQty: prod.quantity });
       bpDataByTypeId.set(prod.typeId, {
+        blueprintTypeId: act.blueprintId,
         outputQty: prod.quantity,
         materials: act.materials.map((m) => {
           typeNameMap.set(m.typeId, m.type.name);
@@ -114,6 +140,14 @@ export async function computePlanMaterials(planId: string): Promise<PlanMaterial
   }
 
   const decisionMap = new Map(plan.decisions.map((d) => [d.typeId, d.decision]));
+
+  // Blueprint ME/TE selections: productTypeId → ordered list of { me, runs }
+  const planBlueprintMap = new Map<number, BpSelection[]>();
+  for (const s of plan.blueprintSelections) {
+    const list = planBlueprintMap.get(s.typeId) ?? [];
+    list.push({ me: s.ownedBlueprint.materialEfficiency, runs: s.runs });
+    planBlueprintMap.set(s.typeId, list);
+  }
 
   // Iterative depth fetch
   const fetchedTypeIds = new Set<number>(bpDataByTypeId.keys());
@@ -143,6 +177,7 @@ export async function computePlanMaterials(planId: string): Promise<PlanMaterial
     for (const act of subActs) {
       for (const prod of act.products) {
         bpDataByTypeId.set(prod.typeId, {
+          blueprintTypeId: act.blueprintId,
           outputQty: prod.quantity,
           materials: act.materials.map((m) => {
             typeNameMap.set(m.typeId, m.type.name);
@@ -165,9 +200,17 @@ export async function computePlanMaterials(planId: string): Promise<PlanMaterial
     const runsNeeded = bpInfo && remaining > 0 ? Math.ceil(remaining / bpInfo.outputQty) : 0;
     const rawMaterials = bpInfo ? (bpDataByTypeId.get(item.typeId)?.materials ?? []) : [];
 
-    const trees = rawMaterials.map((mat) =>
-      buildTree(mat.typeId, mat.quantity * runsNeeded, 1, typeNameMap, bpDataByTypeId, decisionMap),
-    );
+    // Apply ME from selected blueprints and facility bonus for this plan item
+    const facilityMe = plan.facilityMe;
+    const allocations = computeAllocations(planBlueprintMap.get(item.typeId) ?? [], runsNeeded);
+    const trees = rawMaterials.map((mat) => {
+      const adjTotal = allocations.reduce((sum, { me, runs }) => {
+        const modifier = (1 - me / 100) * (1 - facilityMe / 100);
+        const perRun = modifier < 1 ? Math.max(1, Math.ceil(mat.quantity * modifier)) : mat.quantity;
+        return sum + perRun * runs;
+      }, 0);
+      return buildTree(mat.typeId, adjTotal, 1, typeNameMap, bpDataByTypeId, decisionMap, planBlueprintMap, facilityMe);
+    });
     collectLeaves(trees, buyMap, gatherMap);
   }
 

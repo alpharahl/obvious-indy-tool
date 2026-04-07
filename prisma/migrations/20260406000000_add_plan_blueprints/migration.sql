@@ -4,12 +4,13 @@ CREATE TABLE "BuildPlanBlueprint" (
     "planId" TEXT NOT NULL,
     "typeId" INTEGER NOT NULL,
     "ownedBlueprintId" TEXT NOT NULL,
+    "runs" INTEGER NOT NULL,
 
     CONSTRAINT "BuildPlanBlueprint_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateIndex
-CREATE UNIQUE INDEX "BuildPlanBlueprint_planId_typeId_key" ON "BuildPlanBlueprint"("planId", "typeId");
+CREATE UNIQUE INDEX "BuildPlanBlueprint_planId_typeId_ownedBlueprintId_key" ON "BuildPlanBlueprint"("planId", "typeId", "ownedBlueprintId");
 
 -- AddForeignKey
 ALTER TABLE "BuildPlanBlueprint" ADD CONSTRAINT "BuildPlanBlueprint_planId_fkey" FOREIGN KEY ("planId") REFERENCES "BuildPlan"("id") ON DELETE CASCADE ON UPDATE CASCADE;

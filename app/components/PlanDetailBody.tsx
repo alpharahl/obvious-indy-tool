@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState, useTransition, useRef } from "react";
 import { setPlanDecision, removePlanItem, setPlanBlueprint } from "../actions/build-plans";
 import PlanItemProgress from "./PlanItemProgress";
 
@@ -22,8 +22,8 @@ export interface Material {
   decision: "buy" | "build" | "gather";
   canBuild: boolean;      // true if a manufacturing or reaction blueprint exists in the SDE
   subMaterials: Material[];
-  blueprintOptions: BlueprintOption[];   // owned blueprints that can produce this type
-  selectedBlueprintId: string | null;    // currently selected owned blueprint
+  blueprintOptions: BlueprintOption[];                          // owned blueprints that can produce this type
+  selectedBlueprints: Array<{ blueprintId: string; runs: number }>;  // active selections
 }
 
 export interface PlanItemWithMaterials {
@@ -35,7 +35,7 @@ export interface PlanItemWithMaterials {
   runsNeeded: number;
   materials: Material[];
   blueprintOptions: BlueprintOption[];
-  selectedBlueprintId: string | null;
+  selectedBlueprints: Array<{ blueprintId: string; runs: number }>;
 }
 
 export interface ShoppingEntry {
@@ -102,19 +102,60 @@ function DecisionToggle({
 }
 
 // ── Blueprint picker ─────────────────────────────────────────────────────────
+// Supports selecting multiple owned blueprints per product, each with a runs count.
+
+function RunsInput({
+  initialRuns,
+  onCommit,
+}: {
+  initialRuns: number;
+  onCommit: (runs: number) => void;
+}) {
+  const [value, setValue] = useState(initialRuns);
+  const prev = useRef(initialRuns);
+  if (prev.current !== initialRuns) {
+    prev.current = initialRuns;
+    setValue(initialRuns);
+  }
+  return (
+    <input
+      type="number"
+      min={1}
+      value={value}
+      onChange={(e) => setValue(Math.max(1, parseInt(e.target.value, 10) || 1))}
+      onBlur={() => { if (value !== initialRuns) onCommit(value); }}
+      onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
+      className="w-10 text-xs text-center px-0.5 py-0 rounded border"
+      style={{ background: "var(--background)", borderColor: "var(--border)", color: "var(--accent)" }}
+    />
+  );
+}
 
 function BlueprintPicker({
   planId,
   typeId,
   options,
-  selectedId,
+  selected,
 }: {
   planId: string;
   typeId: number;
   options: BlueprintOption[];
-  selectedId: string | null;
+  selected: Array<{ blueprintId: string; runs: number }>;
 }) {
   const [pending, startTransition] = useTransition();
+
+  const selectedIds = new Set(selected.map((s) => s.blueprintId));
+  const unselected = options.filter((o) => !selectedIds.has(o.id));
+
+  function add(blueprintId: string) {
+    startTransition(() => setPlanBlueprint(planId, typeId, blueprintId, 1));
+  }
+  function remove(blueprintId: string) {
+    startTransition(() => setPlanBlueprint(planId, typeId, blueprintId, 0));
+  }
+  function updateRuns(blueprintId: string, runs: number) {
+    startTransition(() => setPlanBlueprint(planId, typeId, blueprintId, runs));
+  }
 
   if (options.length === 0) {
     return (
@@ -124,35 +165,45 @@ function BlueprintPicker({
     );
   }
 
-  const selectedMe = options.find((o) => o.id === selectedId)?.me ?? 0;
-
   return (
-    <div className="flex items-center gap-1 shrink-0">
-      <select
-        value={selectedId ?? ""}
-        disabled={pending}
-        onChange={(e) => {
-          const val = e.target.value || null;
-          startTransition(() => setPlanBlueprint(planId, typeId, val));
-        }}
-        className="text-xs px-1.5 py-0.5 rounded border cursor-pointer transition-opacity disabled:opacity-40"
-        style={{
-          background: "var(--background)",
-          borderColor: selectedId ? "var(--accent)" : "var(--border)",
-          color: selectedId ? "var(--accent)" : "var(--muted-fg)",
-        }}
-      >
-        <option value="">ME 0</option>
-        {options.map((bp) => (
-          <option key={bp.id} value={bp.id}>
-            ME {bp.me} TE {bp.te} — {bp.isBpo ? "BPO" : `BPC ×${bp.runs}`} ({bp.characterName})
-          </option>
-        ))}
-      </select>
-      {selectedId && selectedMe > 0 && (
-        <span className="text-xs tabular-nums shrink-0" style={{ color: "var(--accent)", opacity: 0.7 }}>
-          −{selectedMe}%
-        </span>
+    <div className="flex items-center gap-1.5 shrink-0 flex-wrap" style={{ opacity: pending ? 0.6 : 1 }}>
+      {selected.map((sel) => {
+        const bp = options.find((o) => o.id === sel.blueprintId);
+        if (!bp) return null;
+        return (
+          <span
+            key={sel.blueprintId}
+            className="flex items-center gap-1 text-xs px-1.5 py-0.5 rounded border"
+            style={{ borderColor: "var(--accent)", color: "var(--accent)" }}
+          >
+            <span className="shrink-0">ME{bp.me}</span>
+            <RunsInput initialRuns={sel.runs} onCommit={(r) => updateRuns(sel.blueprintId, r)} />
+            <span className="shrink-0" style={{ color: "var(--muted-fg)" }}>×</span>
+            <button
+              onClick={() => remove(sel.blueprintId)}
+              className="shrink-0 transition-opacity hover:opacity-70"
+              style={{ color: "var(--muted-fg)" }}
+            >
+              ×
+            </button>
+          </span>
+        );
+      })}
+      {unselected.length > 0 && (
+        <select
+          value=""
+          disabled={pending}
+          onChange={(e) => { if (e.target.value) { add(e.target.value); e.currentTarget.value = ""; } }}
+          className="text-xs px-1.5 py-0.5 rounded border cursor-pointer transition-opacity hover:opacity-70 disabled:opacity-40"
+          style={{ background: "var(--background)", borderColor: "var(--border)", color: "var(--muted-fg)" }}
+        >
+          <option value="">+ BP</option>
+          {unselected.map((bp) => (
+            <option key={bp.id} value={bp.id}>
+              ME {bp.me} TE {bp.te} — {bp.isBpo ? "BPO" : `BPC ×${bp.runs}`} ({bp.characterName})
+            </option>
+          ))}
+        </select>
       )}
     </div>
   );
@@ -196,7 +247,7 @@ function MaterialRows({
                 planId={planId}
                 typeId={mat.typeId}
                 options={mat.blueprintOptions}
-                selectedId={mat.selectedBlueprintId}
+                selected={mat.selectedBlueprints}
               />
             )}
             <span
@@ -376,14 +427,14 @@ export default function PlanDetailBody({ planId, items, shopping, gather }: Prop
                   )}
                 </button>
 
-                {item.blueprintOptions.length > 0 || item.materials.length > 0 ? (
+                {item.blueprintOptions.length > 0 && (
                   <BlueprintPicker
                     planId={planId}
                     typeId={item.typeId}
                     options={item.blueprintOptions}
-                    selectedId={item.selectedBlueprintId}
+                    selected={item.selectedBlueprints}
                   />
-                ) : null}
+                )}
 
                 <div className="w-16 shrink-0">
                   <PlanItemProgress

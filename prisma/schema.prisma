@@ -195,10 +195,11 @@ model BuildPlanBlueprint {
   planId           String
   typeId           Int            // product typeId (the thing being built)
   ownedBlueprintId String
+  runs             Int            // manufacturing runs to use from this blueprint
   plan             BuildPlan      @relation(fields: [planId], references: [id], onDelete: Cascade)
   ownedBlueprint   OwnedBlueprint @relation(fields: [ownedBlueprintId], references: [id], onDelete: Cascade)
 
-  @@unique([planId, typeId])
+  @@unique([planId, typeId, ownedBlueprintId])
 }
 
 model Structure {
@@ -243,6 +244,8 @@ model BuildPlan {
   id                  String                @id @default(cuid())
   userId              String
   name                String
+  facilityName        String?
+  facilityMe          Float                 @default(0)
   createdAt           DateTime              @default(now())
   updatedAt           DateTime              @updatedAt
   user                User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
