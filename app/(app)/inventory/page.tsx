@@ -3,8 +3,8 @@ export const dynamic = "force-dynamic";
 import { redirect } from "next/navigation";
 import { auth } from "../../../auth";
 import { prisma } from "../../../lib/prisma";
-import { computePlanMaterials } from "../../../lib/plan-materials";
-import InventoryPlanList, { type InventoryPlanEntry } from "../../components/InventoryPlanList";
+import { computePlanItemTrees } from "../../../lib/plan-materials";
+import InventoryPlanList from "../../components/InventoryPlanList";
 import StockpileManager from "../../components/StockpileManager";
 
 export default async function InventoryPage() {
@@ -15,7 +15,6 @@ export default async function InventoryPage() {
   // All plans for this user
   const plans = await prisma.buildPlan.findMany({
     where: { userId },
-    include: { allocations: true },
     orderBy: { updatedAt: "desc" },
   });
 
@@ -37,24 +36,11 @@ export default async function InventoryPage() {
     }
   }
 
-  // Compute material lists for each plan in parallel
-  const planEntries: InventoryPlanEntry[] = await Promise.all(
+  // Compute item trees for each plan in parallel
+  const planEntries = await Promise.all(
     plans.map(async (plan) => {
-      const materials = await computePlanMaterials(plan.id);
-      const allocationMap = new Map(plan.allocations.map((a) => [a.typeId, a.quantity]));
-
-      return {
-        planId: plan.id,
-        planName: plan.name,
-        materials: materials.map((mat) => ({
-          typeId: mat.typeId,
-          typeName: mat.typeName,
-          needed: mat.needed,
-          kind: mat.kind,
-          available: stockpileQtyByTypeId.get(mat.typeId) ?? 0,
-          allocated: allocationMap.get(mat.typeId) ?? 0,
-        })),
-      };
+      const items = await computePlanItemTrees(plan.id, userId, stockpileQtyByTypeId);
+      return { planId: plan.id, planName: plan.name, items };
     }),
   );
 
