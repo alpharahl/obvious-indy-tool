@@ -1,0 +1,10 @@
+-- AlterTable
+ALTER TABLE "BuildPlanDecision" ADD COLUMN     "facilityMe" DOUBLE PRECISION NOT NULL DEFAULT 0,
+ADD COLUMN     "facilityTe" DOUBLE PRECISION NOT NULL DEFAULT 0,
+ADD COLUMN     "me" INTEGER NOT NULL DEFAULT 0,
+ADD COLUMN     "meRigTier" TEXT,
+ADD COLUMN     "stationType" TEXT,
+ADD COLUMN     "structureType" TEXT,
+ADD COLUMN     "systemName" TEXT,
+ADD COLUMN     "te" INTEGER NOT NULL DEFAULT 0,
+ADD COLUMN     "teRigTier" TEXT;

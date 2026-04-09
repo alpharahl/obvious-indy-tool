@@ -7,7 +7,9 @@ import { prisma } from "../../lib/prisma";
 
 async function requireUserId() {
   const session = await auth();
-  if (!session?.user?.id) throw new Error("Not authenticated");
+  if (!session?.user?.id) redirect("/login");
+  const user = await prisma.user.findUnique({ where: { id: session.user.id }, select: { id: true } });
+  if (!user) redirect("/login");
   return session.user.id;
 }
 

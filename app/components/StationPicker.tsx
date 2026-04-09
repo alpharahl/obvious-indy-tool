@@ -59,9 +59,19 @@ interface Props {
   onChange: (value: FacilityValue) => void;
 }
 
+type SecClass = "hs" | "ls" | "ns" | "wh" | "";
+
+const SEC_CLASSES: { value: SecClass; label: string }[] = [
+  { value: "hs", label: "Hi-Sec" },
+  { value: "ls", label: "Lo-Sec" },
+  { value: "ns", label: "Null-Sec" },
+  { value: "wh", label: "WH" },
+];
+
 export default function StationPicker({ value, onChange }: Props) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState(value.systemName);
+  const [secClass, setSecClass] = useState<SecClass>("");
   const [results, setResults] = useState<{ id: number; name: string; security: number }[]>([]);
   const [, startSearch] = useTransition();
   const containerRef = useRef<HTMLDivElement>(null);
@@ -81,7 +91,15 @@ export default function StationPicker({ value, onChange }: Props) {
   function handleQuery(q: string) {
     setQuery(q);
     if (q.trim().length < 2) { setResults([]); return; }
-    startSearch(async () => setResults(await searchSystems(q)));
+    startSearch(async () => setResults(await searchSystems(q, secClass || undefined)));
+  }
+
+  function handleSecClass(cls: SecClass) {
+    const next = secClass === cls ? "" : cls;
+    setSecClass(next);
+    if (query.trim().length >= 2) {
+      startSearch(async () => setResults(await searchSystems(query, next || undefined)));
+    }
   }
 
   function pickSystem(name: string) {
@@ -136,6 +154,18 @@ export default function StationPicker({ value, onChange }: Props) {
           className="absolute z-30 top-full mt-1 left-0 rounded border flex flex-col gap-3 p-3"
           style={{ background: "var(--panel)", borderColor: "var(--border)", minWidth: "22rem" }}
         >
+          {/* Sec class filter */}
+          <div className="flex gap-1.5">
+            {SEC_CLASSES.map((s) => (
+              <button key={s.value} onClick={() => handleSecClass(s.value)}
+                className="flex-1 text-xs py-0.5 rounded border cursor-pointer transition-opacity hover:opacity-70"
+                style={{ borderColor: secClass === s.value ? "var(--accent)" : "var(--border)", color: secClass === s.value ? "var(--accent)" : "var(--muted-fg)", background: secClass === s.value ? "rgba(0,229,192,0.06)" : "transparent" }}
+              >
+                {s.label}
+              </button>
+            ))}
+          </div>
+
           {/* System search */}
           <div className="relative">
             <input
