@@ -26,12 +26,13 @@ function sumLeaves(mats: InventoryTreeNode[]): { covered: number; total: number 
 // ── Blueprint picker ──────────────────────────────────────────────────────────
 
 function BlueprintPicker({
-  planId, typeId, options, selected,
+  planId, typeId, options, selected, runsNeeded,
 }: {
   planId: string;
   typeId: number;
   options: InventoryBpOption[];
   selected: Array<{ blueprintId: string; runs: number }>;
+  runsNeeded: number;
 }) {
   const [open, setOpen] = useState(false);
   const [pending, startTransition] = useTransition();
@@ -49,10 +50,16 @@ function BlueprintPicker({
 
   const selectedIds = new Set(selected.map((s) => s.blueprintId));
   const unselected = options.filter((o) => !selectedIds.has(o.id));
+  const coveredRuns = selected.reduce((s, sel) => s + sel.runs, 0);
+  const runsStillNeeded = Math.max(0, runsNeeded - coveredRuns);
+  const allRunsCovered = runsNeeded > 0 && coveredRuns >= runsNeeded;
 
   function addBp(bpId: string) {
     setOpen(false);
-    startTransition(() => setPlanBlueprint(planId, typeId, bpId, 1));
+    const opt = options.find((o) => o.id === bpId);
+    const bpMaxRuns = opt && !opt.isBpo ? opt.runs : runsStillNeeded;
+    const autoRuns = Math.max(1, Math.min(bpMaxRuns, runsStillNeeded || 1));
+    startTransition(() => setPlanBlueprint(planId, typeId, bpId, autoRuns));
   }
 
   function removeBp(bpId: string) {
@@ -69,6 +76,16 @@ function BlueprintPicker({
 
   return (
     <div ref={containerRef} className="flex flex-wrap gap-1 items-center mt-1">
+      {/* Run coverage badge */}
+      {runsNeeded > 0 && (
+        <span
+          className="text-xs tabular-nums shrink-0"
+          style={{ color: allRunsCovered ? "var(--accent)" : "var(--muted-fg)" }}
+        >
+          {coveredRuns}/{runsNeeded} runs
+        </span>
+      )}
+
       {selected.map((s) => {
         const opt = options.find((o) => o.id === s.blueprintId);
         if (!opt) return null;
@@ -100,7 +117,9 @@ function BlueprintPicker({
           </div>
         );
       })}
-      {unselected.length > 0 && (
+
+      {/* Only show + BP when there are uncovered runs and unselected blueprints */}
+      {unselected.length > 0 && !allRunsCovered && (
         <div className="relative">
           <button
             onClick={() => setOpen((v) => !v)}
@@ -115,19 +134,23 @@ function BlueprintPicker({
               className="absolute z-20 mt-1 left-0 rounded border overflow-hidden text-xs"
               style={{ background: "var(--panel)", borderColor: "var(--border)", minWidth: "18rem" }}
             >
-              {unselected.map((opt) => (
-                <button
-                  key={opt.id}
-                  onMouseDown={() => addBp(opt.id)}
-                  className="w-full text-left px-3 py-1.5 hover:opacity-70 cursor-pointer flex items-center justify-between gap-3"
-                  style={{ color: "var(--foreground)" }}
-                >
-                  <span className="truncate">{opt.characterName}</span>
-                  <span className="shrink-0 tabular-nums" style={{ color: "var(--muted-fg)" }}>
-                    ME{opt.me} TE{opt.te} {opt.isBpo ? "BPO" : `${opt.runs}r`}
-                  </span>
-                </button>
-              ))}
+              {unselected.map((opt) => {
+                const bpMaxRuns = opt.isBpo ? runsStillNeeded : Math.min(opt.runs, runsStillNeeded);
+                return (
+                  <button
+                    key={opt.id}
+                    onMouseDown={() => addBp(opt.id)}
+                    className="w-full text-left px-3 py-1.5 hover:opacity-70 cursor-pointer flex items-center justify-between gap-3"
+                    style={{ color: "var(--foreground)" }}
+                  >
+                    <span className="truncate">{opt.characterName}</span>
+                    <span className="shrink-0 tabular-nums" style={{ color: "var(--muted-fg)" }}>
+                      ME{opt.me} TE{opt.te} {opt.isBpo ? "BPO" : `${opt.runs}r`}
+                      {runsNeeded > 0 && ` → ${bpMaxRuns}r`}
+                    </span>
+                  </button>
+                );
+              })}
             </div>
           )}
         </div>
@@ -201,6 +224,7 @@ function TreeNodeRow({
               typeId={node.typeId}
               options={node.blueprintOptions}
               selected={node.selectedBlueprints}
+              runsNeeded={node.runsNeeded}
             />
           )}
         </div>
@@ -244,6 +268,7 @@ function PlanItemSection({ item, planId }: { item: InventoryPlanItemTree; planId
               typeId={item.typeId}
               options={item.blueprintOptions}
               selected={item.selectedBlueprints}
+              runsNeeded={item.runsNeeded}
             />
           </div>
         )}

@@ -79,7 +79,7 @@ const navItems = [
   },
 ];
 
-const enabledHrefs = new Set(["/", "/plans", "/blueprints", "/inventory", "/admin"]);
+const enabledHrefs = new Set(["/", "/plans", "/blueprints", "/admin"]);
 
 export default function Sidebar({ isAdmin }: { isAdmin: boolean }) {
   const pathname = usePathname();

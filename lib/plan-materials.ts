@@ -110,6 +110,7 @@ export interface InventoryTreeNode {
   quantity: number;         // total needed before stockpile
   effectiveQty: number;     // still needed after stockpile
   stockpileCovered: number; // covered by stockpile
+  runsNeeded: number;       // manufacturing runs required (0 if not a build node)
   decision: "buy" | "build" | "gather";
   canBuild: boolean;
   subMaterials: InventoryTreeNode[];
@@ -241,11 +242,11 @@ export async function computePlanItemTrees(
     const blueprintOptions = bpData ? (ownedBpByBpTypeId.get(bpData.blueprintTypeId) ?? []) : [];
     const bpSelections = planBpByProductTypeId.get(typeId) ?? [];
     const selectedBlueprints = bpSelections.map((s) => ({ blueprintId: s.ownedBlueprintId, runs: s.runs }));
+    const runsNeeded = bpData && effectiveQty > 0 ? Math.ceil(effectiveQty / bpData.outputQty) : 0;
 
     let subMaterials: InventoryTreeNode[] = [];
     if (decision === "build" && bpData && depth < MAX_MATERIAL_DEPTH && effectiveQty > 0) {
-      const totalRuns = Math.ceil(effectiveQty / bpData.outputQty);
-      const allocations = computeAllocations(bpSelections, totalRuns);
+      const allocations = computeAllocations(bpSelections, runsNeeded);
       subMaterials = bpData.materials.map((mat) => {
         const adjTotal = allocations.reduce((sum, { me, runs }) => {
           const modifier = (1 - me / 100) * (1 - facilityMe / 100);
@@ -256,7 +257,7 @@ export async function computePlanItemTrees(
       });
     }
 
-    return { typeId, typeName, quantity: totalQty, effectiveQty, stockpileCovered, decision, canBuild, subMaterials, blueprintOptions, selectedBlueprints };
+    return { typeId, typeName, quantity: totalQty, effectiveQty, stockpileCovered, runsNeeded, decision, canBuild, subMaterials, blueprintOptions, selectedBlueprints };
   }
 
   return plan.items.map((item) => {
