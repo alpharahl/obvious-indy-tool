@@ -152,10 +152,16 @@ export async function setItemFacility(
   revalidatePath("/plans");
 }
 
-export async function searchSystems(query: string) {
+export async function searchSystems(query: string, secClass?: "hs" | "ls" | "ns" | "wh") {
   if (query.trim().length < 2) return [];
+  const secFilter =
+    secClass === "hs" ? { security: { gte: 0.45 } } :
+    secClass === "ls" ? { security: { gt: 0.0, lt: 0.45 } } :
+    secClass === "ns" ? { security: { lte: 0.0 }, NOT: { name: { startsWith: "J" } } } :
+    secClass === "wh" ? { name: { startsWith: "J" }, security: { lt: 0.0 } } :
+    {};
   return prisma.sdeSolarSystem.findMany({
-    where: { name: { contains: query.trim(), mode: "insensitive" } },
+    where: { name: { contains: query.trim(), mode: "insensitive" }, ...secFilter },
     select: { id: true, name: true, security: true },
     orderBy: { name: "asc" },
     take: 20,
@@ -232,6 +238,45 @@ export async function setPlanBlueprint(planId: string, productTypeId: number, ow
     });
   }
   revalidatePath(`/plans/${planId}`);
+}
+
+export async function setBulkItemFacility(
+  planId: string,
+  typeIds: number[],
+  f: {
+    systemName: string;
+    stationType: string;
+    structureType: string;
+    meRigTier: string;
+    teRigTier: string;
+    facilityMe: number;
+    facilityTe: number;
+  },
+) {
+  const userId = await requireUserId();
+  const plan = await prisma.buildPlan.findFirst({ where: { id: planId, userId } });
+  if (!plan) throw new Error("Plan not found");
+
+  const data = {
+    systemName: f.systemName || null,
+    stationType: f.stationType || null,
+    structureType: f.structureType || null,
+    meRigTier: f.meRigTier || null,
+    teRigTier: f.teRigTier || null,
+    facilityMe: f.facilityMe,
+    facilityTe: f.facilityTe,
+  };
+
+  await prisma.$transaction(
+    typeIds.map((typeId) =>
+      prisma.buildPlanDecision.upsert({
+        where: { planId_typeId: { planId, typeId } },
+        update: data,
+        create: { planId, typeId, decision: "build", ...data },
+      }),
+    ),
+  );
+  revalidatePath("/plans");
 }
 
 export async function searchBuildableTypes(query: string) {

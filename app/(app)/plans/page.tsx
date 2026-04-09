@@ -75,6 +75,19 @@ export default async function PlansPage() {
     frontier = [...new Set(nextFrontier)];
   }
 
+  // Fetch category data for all craftable typeIds (bpMap keys)
+  const bpTypeIds = Object.keys(bpMap).map(Number);
+  const typeCategories = bpTypeIds.length
+    ? await prisma.sdeType.findMany({
+        where: { id: { in: bpTypeIds } },
+        select: { id: true, group: { select: { category: { select: { id: true, name: true } } } } },
+      })
+    : [];
+  const categoryMap: Record<number, { categoryId: number; categoryName: string }> = {};
+  for (const t of typeCategories) {
+    categoryMap[t.id] = { categoryId: t.group.category.id, categoryName: t.group.category.name };
+  }
+
   return (
     <main className="flex-1 overflow-y-auto p-4 flex flex-col gap-4 min-w-0">
       <div className="flex items-center justify-between">
@@ -101,6 +114,7 @@ export default async function PlansPage() {
           bpMap={bpMap}
           initialDecisions={decisions}
           initialBpSettings={initialBpSettings}
+          categoryMap={categoryMap}
         />
       )}
     </main>
