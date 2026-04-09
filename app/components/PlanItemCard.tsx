@@ -158,7 +158,7 @@ interface Props {
 export default function PlanItemCard({ itemId, planId, typeId, typeName, isShip, initialRuns, bp, bpMap, expandedIds, onToggle, bpSettings, onBpSettingsChange, onFacilityChange }: Props) {
   const [runs, setRuns] = useState(initialRuns);
   const [, startTransition] = useTransition();
-  const { me = 0, te = 0, facilityMe = 0, facilityTe = 0 } = bpSettings[typeId] ?? {};
+  const { me = 0, te = 0, systemName = "", stationType = "", structureType = "", meRigTier = "", teRigTier = "", facilityMe = 0, facilityTe = 0 } = bpSettings[typeId] ?? {};
   const adjustedTime = bp ? Math.round(bp.time * (1 - te / 100) * (1 - facilityTe / 100)) : 0;
 
   function handleRunsChange(newRuns: number) {
@@ -227,6 +227,10 @@ export default function PlanItemCard({ itemId, planId, typeId, typeName, isShip,
                       style={{ borderColor: "var(--border)", color: "var(--foreground)" }}
                     />
                   </label>
+                  <StationPicker
+                    value={{ systemName, stationType, structureType, meRigTier, teRigTier, facilityMe, facilityTe }}
+                    onChange={(v) => onFacilityChange(typeId, v)}
+                  />
                 </div>
               </div>
             )}
