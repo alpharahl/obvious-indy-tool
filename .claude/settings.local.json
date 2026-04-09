@@ -1,7 +1,11 @@
 {
   "permissions": {
     "allow": [
-      "Bash(npx tsc:*)"
+      "Bash(npx tsc:*)",
+      "WebFetch(domain:janice.e-351.com)",
+      "Bash(curl -sv \"https://janice.e-351.com/api/rest/appraisal/v2?market=2&persist=false\" -H \"Content-Type: text/plain\" -d \"Tritanium 1000\")",
+      "Bash(curl -s \"https://janice.e-351.com/api/rest/appraisal?market=2&persist=false\" -H \"Content-Type: text/plain\" -d \"Tritanium 1000\")",
+      "Bash(curl -sv \"https://janice.e-351.com/api/rest/appraisal/v2?market=2&persist=false\" -H \"Content-Type: text/plain\" -H \"X-ApiKey: \" -d \"Tritanium 1000\")"
     ]
   }
 }
