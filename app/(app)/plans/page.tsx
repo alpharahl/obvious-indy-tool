@@ -6,7 +6,6 @@ import { prisma } from "../../../lib/prisma";
 import { getOrCreateDefaultPlan } from "../../actions/build-plans";
 import AddItemButton from "../../components/AddItemButton";
 import PlanBody from "../../components/PlanBody";
-import FacilityPicker from "../../components/FacilityPicker";
 import { type BpMap, type Decisions, type BpSettings } from "../../components/PlanItemCard";
 import { type StationType, type RigTier } from "../../components/StationPicker";
 
@@ -90,18 +89,11 @@ export default async function PlansPage() {
 
   return (
     <main className="flex-1 overflow-y-auto p-4 flex flex-col gap-4 min-w-0">
-      <div className="flex items-center justify-between">
-        <h1 className="text-base uppercase tracking-widest" style={{ color: "var(--foreground)" }}>
-          Build Plan
-        </h1>
-        <AddItemButton planId={plan.id} />
-      </div>
+      <h1 className="text-base uppercase tracking-widest" style={{ color: "var(--foreground)" }}>
+        Build Plan
+      </h1>
 
-      <FacilityPicker
-        planId={plan.id}
-        initialName={plan.facilityName ?? ""}
-        initialMe={plan.facilityMe}
-      />
+      <AddItemButton planId={plan.id} />
 
       {plan.items.length === 0 ? (
         <p className="text-xs py-8 text-center" style={{ color: "var(--muted-fg)" }}>
