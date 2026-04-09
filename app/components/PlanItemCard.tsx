@@ -4,6 +4,7 @@ import Image from "next/image";
 import { useState, useTransition } from "react";
 import { addPlanItem, removePlanItem } from "../actions/build-plans";
 import NumberInput from "./NumberInput";
+import StationPicker, { type FacilityValue, type StationType, type RigTier } from "./StationPicker";
 
 export interface BpEntry {
   outputQty: number;
@@ -14,7 +15,7 @@ export interface BpEntry {
 
 export type BpMap = Record<number, BpEntry>;
 export type Decisions = Record<number, "build" | "buy">;
-export type BpSettings = Record<number, { me: number; te: number }>;
+export type BpSettings = Record<number, { me: number; te: number; systemName: string; stationType: StationType; structureType: string; meRigTier: RigTier; teRigTier: RigTier; facilityMe: number; facilityTe: number }>;
 
 function formatDuration(seconds: number): string {
   if (seconds <= 0) return "0s";
@@ -28,8 +29,8 @@ function formatDuration(seconds: number): string {
   return `${s}s`;
 }
 
-function adjustedMatQty(baseQty: number, me: number): number {
-  return Math.max(1, Math.ceil(baseQty * (1 - me / 100)));
+function adjustedMatQty(baseQty: number, bpMe: number, facilityMe: number): number {
+  return Math.max(1, Math.ceil(baseQty * (1 - bpMe / 100) * (1 - facilityMe / 100)));
 }
 
 interface MaterialRowProps {
@@ -42,14 +43,15 @@ interface MaterialRowProps {
   onToggle: (typeId: number) => void;
   bpSettings: BpSettings;
   onBpSettingsChange: (typeId: number, me: number, te: number) => void;
+  onFacilityChange: (typeId: number, value: FacilityValue) => void;
 }
 
-export function MaterialRow({ typeId, name, quantity, bpMap, depth, expandedIds, onToggle, bpSettings, onBpSettingsChange }: MaterialRowProps) {
+export function MaterialRow({ typeId, name, quantity, bpMap, depth, expandedIds, onToggle, bpSettings, onBpSettingsChange, onFacilityChange }: MaterialRowProps) {
   const bp = bpMap[typeId];
   const expanded = expandedIds.has(typeId);
-  const { me = 0, te = 0 } = bpSettings[typeId] ?? {};
+  const { me = 0, te = 0, systemName = "", stationType = "", structureType = "", meRigTier = "", teRigTier = "", facilityMe = 0, facilityTe = 0 } = bpSettings[typeId] ?? {};
   const runs = bp ? Math.ceil(quantity / bp.outputQty) : 0;
-  const adjustedTime = bp ? Math.round(bp.time * (1 - te / 100)) : 0;
+  const adjustedTime = bp ? Math.round(bp.time * (1 - te / 100) * (1 - facilityTe / 100)) : 0;
 
   return (
     <div>
@@ -98,6 +100,10 @@ export function MaterialRow({ typeId, name, quantity, bpMap, depth, expandedIds,
                   style={{ borderColor: "var(--border)", color: "var(--foreground)" }}
                 />
               </label>
+              <StationPicker
+                value={{ systemName, stationType, structureType, meRigTier, teRigTier, facilityMe, facilityTe }}
+                onChange={(v) => onFacilityChange(typeId, v)}
+              />
             </div>
           )}
         </div>
@@ -119,13 +125,14 @@ export function MaterialRow({ typeId, name, quantity, bpMap, depth, expandedIds,
           key={mat.typeId}
           typeId={mat.typeId}
           name={mat.name}
-          quantity={adjustedMatQty(mat.quantity, me) * runs}
+          quantity={adjustedMatQty(mat.quantity, me, facilityMe) * runs}
           bpMap={bpMap}
           depth={depth + 1}
           expandedIds={expandedIds}
           onToggle={onToggle}
           bpSettings={bpSettings}
           onBpSettingsChange={onBpSettingsChange}
+          onFacilityChange={onFacilityChange}
         />
       ))}
     </div>
@@ -145,13 +152,14 @@ interface Props {
   onToggle: (typeId: number) => void;
   bpSettings: BpSettings;
   onBpSettingsChange: (typeId: number, me: number, te: number) => void;
+  onFacilityChange: (typeId: number, value: FacilityValue) => void;
 }
 
-export default function PlanItemCard({ itemId, planId, typeId, typeName, isShip, initialRuns, bp, bpMap, expandedIds, onToggle, bpSettings, onBpSettingsChange }: Props) {
+export default function PlanItemCard({ itemId, planId, typeId, typeName, isShip, initialRuns, bp, bpMap, expandedIds, onToggle, bpSettings, onBpSettingsChange, onFacilityChange }: Props) {
   const [runs, setRuns] = useState(initialRuns);
   const [, startTransition] = useTransition();
-  const { me = 0, te = 0 } = bpSettings[typeId] ?? {};
-  const adjustedTime = bp ? Math.round(bp.time * (1 - te / 100)) : 0;
+  const { me = 0, te = 0, facilityMe = 0, facilityTe = 0 } = bpSettings[typeId] ?? {};
+  const adjustedTime = bp ? Math.round(bp.time * (1 - te / 100) * (1 - facilityTe / 100)) : 0;
 
   function handleRunsChange(newRuns: number) {
     setRuns(newRuns);
@@ -243,13 +251,14 @@ export default function PlanItemCard({ itemId, planId, typeId, typeName, isShip,
               key={mat.typeId}
               typeId={mat.typeId}
               name={mat.name}
-              quantity={adjustedMatQty(mat.quantity, me) * runs}
+              quantity={adjustedMatQty(mat.quantity, me, facilityMe) * runs}
               bpMap={bpMap}
               depth={0}
               expandedIds={expandedIds}
               onToggle={onToggle}
               bpSettings={bpSettings}
               onBpSettingsChange={onBpSettingsChange}
+              onFacilityChange={onFacilityChange}
             />
           ))}
         </div>

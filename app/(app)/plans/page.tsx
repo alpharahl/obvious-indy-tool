@@ -6,7 +6,9 @@ import { prisma } from "../../../lib/prisma";
 import { getOrCreateDefaultPlan } from "../../actions/build-plans";
 import AddItemButton from "../../components/AddItemButton";
 import PlanBody from "../../components/PlanBody";
+import FacilityPicker from "../../components/FacilityPicker";
 import { type BpMap, type Decisions, type BpSettings } from "../../components/PlanItemCard";
+import { type StationType, type RigTier } from "../../components/StationPicker";
 
 const MAX_DEPTH = 4;
 
@@ -40,8 +42,8 @@ export default async function PlansPage() {
   const initialBpSettings: BpSettings = {};
   for (const d of decisionRows) {
     decisions[d.typeId] = d.decision as "build" | "buy";
-    if (d.me > 0 || d.te > 0) {
-      initialBpSettings[d.typeId] = { me: d.me, te: d.te };
+    if (d.me > 0 || d.te > 0 || d.systemName || d.facilityMe > 0 || d.facilityTe > 0) {
+      initialBpSettings[d.typeId] = { me: d.me, te: d.te, systemName: d.systemName ?? "", stationType: (d.stationType ?? "") as StationType, structureType: d.structureType ?? "", meRigTier: (d.meRigTier ?? "") as RigTier, teRigTier: (d.teRigTier ?? "") as RigTier, facilityMe: d.facilityMe, facilityTe: d.facilityTe };
     }
   }
 
@@ -81,6 +83,12 @@ export default async function PlansPage() {
         </h1>
         <AddItemButton planId={plan.id} />
       </div>
+
+      <FacilityPicker
+        planId={plan.id}
+        initialName={plan.facilityName ?? ""}
+        initialMe={plan.facilityMe}
+      />
 
       {plan.items.length === 0 ? (
         <p className="text-xs py-8 text-center" style={{ color: "var(--muted-fg)" }}>

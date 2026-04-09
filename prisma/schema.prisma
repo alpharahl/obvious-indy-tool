@@ -260,8 +260,15 @@ model BuildPlanDecision {
   planId   String
   typeId   Int
   decision String    // "buy" | "build" | "gather"
-  me       Int       @default(0) // blueprint material efficiency 0–10
-  te       Int       @default(0) // blueprint time efficiency 0–20
+  me           Int     @default(0)   // blueprint material efficiency 0–10
+  te           Int     @default(0)   // blueprint time efficiency 0–20
+  systemName    String?
+  stationType   String?  // "npc" | "citadel" | "engineering" | "refinery"
+  structureType String?
+  meRigTier     String?  // "t1" | "t2"
+  teRigTier     String?  // "t1" | "t2"
+  facilityMe    Float    @default(0)
+  facilityTe    Float    @default(0)
   plan     BuildPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
   type     SdeType   @relation(fields: [typeId], references: [id])
 

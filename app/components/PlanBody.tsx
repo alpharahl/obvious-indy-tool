@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { setPlanDecision, setBulkDecisions, setBpEfficiency } from "../actions/build-plans";
+import { setPlanDecision, setBulkDecisions, setBpEfficiency, setItemFacility } from "../actions/build-plans";
+import { type FacilityValue } from "./StationPicker";
 import PlanItemCard, { type BpMap, type Decisions, type BpSettings } from "./PlanItemCard";
 
 interface PlanItem {
@@ -44,9 +45,22 @@ export default function PlanBody({ planId, items, bpMap, initialDecisions, initi
   }
 
   function handleBpSettingsChange(typeId: number, me: number, te: number) {
-    setBpSettings((prev) => ({ ...prev, [typeId]: { me, te } }));
+    setBpSettings((prev) => {
+      const cur = prev[typeId];
+      return { ...prev, [typeId]: cur ? { ...cur, me, te } : { me, te, systemName: "", stationType: "", structureType: "", meRigTier: "", teRigTier: "", facilityMe: 0, facilityTe: 0 } };
+    });
     startTransition(async () => {
       await setBpEfficiency(planId, typeId, me, te);
+    });
+  }
+
+  function handleFacilityChange(typeId: number, facility: FacilityValue) {
+    setBpSettings((prev) => {
+      const cur = prev[typeId];
+      return { ...prev, [typeId]: { me: cur?.me ?? 0, te: cur?.te ?? 0, systemName: facility.systemName, stationType: facility.stationType, structureType: facility.structureType, meRigTier: facility.meRigTier, teRigTier: facility.teRigTier, facilityMe: facility.facilityMe, facilityTe: facility.facilityTe } };
+    });
+    startTransition(async () => {
+      await setItemFacility(planId, typeId, facility);
     });
   }
 
@@ -112,6 +126,7 @@ export default function PlanBody({ planId, items, bpMap, initialDecisions, initi
               onToggle={toggle}
               bpSettings={bpSettings}
               onBpSettingsChange={handleBpSettingsChange}
+              onFacilityChange={handleFacilityChange}
             />
           );
         })}

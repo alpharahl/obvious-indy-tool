@@ -117,6 +117,51 @@ export async function setBpEfficiency(planId: string, typeId: number, me: number
   revalidatePath("/plans");
 }
 
+export async function setItemFacility(
+  planId: string,
+  typeId: number,
+  f: {
+    systemName: string;
+    stationType: string;
+    structureType: string;
+    meRigTier: string;
+    teRigTier: string;
+    facilityMe: number;
+    facilityTe: number;
+  },
+) {
+  const userId = await requireUserId();
+  const plan = await prisma.buildPlan.findFirst({ where: { id: planId, userId } });
+  if (!plan) throw new Error("Plan not found");
+
+  const data = {
+    systemName: f.systemName || null,
+    stationType: f.stationType || null,
+    structureType: f.structureType || null,
+    meRigTier: f.meRigTier || null,
+    teRigTier: f.teRigTier || null,
+    facilityMe: f.facilityMe,
+    facilityTe: f.facilityTe,
+  };
+
+  await prisma.buildPlanDecision.upsert({
+    where: { planId_typeId: { planId, typeId } },
+    update: data,
+    create: { planId, typeId, decision: "build", ...data },
+  });
+  revalidatePath("/plans");
+}
+
+export async function searchSystems(query: string) {
+  if (query.trim().length < 2) return [];
+  return prisma.sdeSolarSystem.findMany({
+    where: { name: { contains: query.trim(), mode: "insensitive" } },
+    select: { id: true, name: true, security: true },
+    orderBy: { name: "asc" },
+    take: 20,
+  });
+}
+
 export async function setBulkDecisions(planId: string, typeIds: number[], decision: "buy" | "build") {
   const userId = await requireUserId();
   const plan = await prisma.buildPlan.findFirst({ where: { id: planId, userId } });
@@ -165,7 +210,7 @@ export async function setPlanFacility(planId: string, facilityName: string, faci
       facilityMe: Math.max(0, facilityMe),
     },
   });
-  revalidatePath(`/plans/${planId}`);
+  revalidatePath("/plans");
 }
 
 export async function setPlanBlueprint(planId: string, productTypeId: number, ownedBlueprintId: string, runs: number) {
