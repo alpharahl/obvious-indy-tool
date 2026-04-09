@@ -74,6 +74,16 @@ export default async function PlansPage() {
     frontier = [...new Set(nextFrontier)];
   }
 
+  // Aggregate stockpile quantities across all stockpiles
+  const stockpileItems = await prisma.stockpileItem.findMany({
+    where: { stockpile: { userId: session.user.id } },
+    select: { typeId: true, quantity: true },
+  });
+  const stockpileByTypeId: Record<number, number> = {};
+  for (const item of stockpileItems) {
+    stockpileByTypeId[item.typeId] = (stockpileByTypeId[item.typeId] ?? 0) + item.quantity;
+  }
+
   // Fetch category data for all craftable typeIds (bpMap keys)
   const bpTypeIds = Object.keys(bpMap).map(Number);
   const typeCategories = bpTypeIds.length
@@ -107,6 +117,7 @@ export default async function PlansPage() {
           initialDecisions={decisions}
           initialBpSettings={initialBpSettings}
           categoryMap={categoryMap}
+          stockpileByTypeId={stockpileByTypeId}
         />
       )}
     </main>

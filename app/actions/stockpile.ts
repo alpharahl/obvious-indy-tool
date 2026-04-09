@@ -7,6 +7,8 @@ import { prisma } from "../../lib/prisma";
 async function requireUserId() {
   const session = await auth();
   if (!session?.user?.id) throw new Error("Not authenticated");
+  const user = await prisma.user.findUnique({ where: { id: session.user.id }, select: { id: true } });
+  if (!user) throw new Error("Not authenticated");
   return session.user.id;
 }
 
@@ -54,21 +56,29 @@ export async function saveStockpile(
 ): Promise<{ saved: number; unmatched: string[] }> {
   const userId = await requireUserId();
 
-  // Parse EVE clipboard format — handle both \r\n and \n
+  // Parse EVE clipboard format — supports:
+  //   "Name\tQuantity[\t...]"  (inventory window copy)
+  //   "Name x Quantity"        (contract / multibuy)
+  //   "Name"                   (no quantity → 1)
   const lines = rawText
     .split(/\r?\n/)
     .map((l) => l.trim())
     .filter(Boolean);
 
   const parsed: Array<{ name: string; quantity: number }> = lines.map((line) => {
+    // Tab-separated (inventory paste): first column is name, second is qty (may have commas)
     const tabIdx = line.indexOf("\t");
-    if (tabIdx === -1) {
-      return { name: line, quantity: 1 };
+    if (tabIdx !== -1) {
+      const itemName = line.slice(0, tabIdx).trim();
+      const qtyStr = line.slice(tabIdx + 1).split("\t")[0].trim().replace(/,/g, "");
+      return { name: itemName, quantity: parseInt(qtyStr, 10) || 1 };
     }
-    const itemName = line.slice(0, tabIdx).trim();
-    const qtyStr = line.slice(tabIdx + 1).trim().replace(/,/g, "");
-    const quantity = parseInt(qtyStr, 10) || 1;
-    return { name: itemName, quantity };
+    // "Name x Quantity" format (contract / multibuy window)
+    const xMatch = line.match(/^(.+?)\s+x\s+([\d,]+)$/i);
+    if (xMatch) {
+      return { name: xMatch[1].trim(), quantity: parseInt(xMatch[2].replace(/,/g, ""), 10) || 1 };
+    }
+    return { name: line, quantity: 1 };
   });
 
   const names = parsed.map((p) => p.name);

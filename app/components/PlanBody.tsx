@@ -30,9 +30,10 @@ interface Props {
   initialDecisions: Decisions;
   initialBpSettings: BpSettings;
   categoryMap: Record<number, CategoryInfo>;
+  stockpileByTypeId: Record<number, number>;
 }
 
-export default function PlanBody({ planId, items, bpMap, initialDecisions, initialBpSettings, categoryMap }: Props) {
+export default function PlanBody({ planId, items, bpMap, initialDecisions, initialBpSettings, categoryMap, stockpileByTypeId }: Props) {
   const [expandedIds, setExpandedIds] = useState<Set<number>>(
     () => new Set(
       Object.entries(initialDecisions)
@@ -198,6 +199,7 @@ export default function PlanBody({ planId, items, bpMap, initialDecisions, initi
               bpSettings={bpSettings}
               onBpSettingsChange={handleBpSettingsChange}
               onFacilityChange={handleFacilityChange}
+              stockpileByTypeId={stockpileByTypeId}
             />
           );
         })}

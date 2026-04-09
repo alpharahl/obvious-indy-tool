@@ -33,6 +33,19 @@ function adjustedMatQty(baseQty: number, bpMe: number, facilityMe: number): numb
   return Math.max(1, Math.ceil(baseQty * (1 - bpMe / 100) * (1 - facilityMe / 100)));
 }
 
+function ProgressBar({ progress }: { progress: number }) {
+  const pct = Math.round(progress * 100);
+  const color = progress >= 1 ? "var(--accent)" : progress > 0 ? "#f59e0b" : "var(--border)";
+  return (
+    <div className="relative h-1 w-full" style={{ background: "var(--border)" }}>
+      <div
+        className="absolute inset-y-0 left-0 transition-all"
+        style={{ width: `${pct}%`, background: color }}
+      />
+    </div>
+  );
+}
+
 interface MaterialRowProps {
   typeId: number;
   name: string;
@@ -44,14 +57,18 @@ interface MaterialRowProps {
   bpSettings: BpSettings;
   onBpSettingsChange: (typeId: number, me: number, te: number) => void;
   onFacilityChange: (typeId: number, value: FacilityValue) => void;
+  stockpileByTypeId: Record<number, number>;
 }
 
-export function MaterialRow({ typeId, name, quantity, bpMap, depth, expandedIds, onToggle, bpSettings, onBpSettingsChange, onFacilityChange }: MaterialRowProps) {
+export function MaterialRow({ typeId, name, quantity, bpMap, depth, expandedIds, onToggle, bpSettings, onBpSettingsChange, onFacilityChange, stockpileByTypeId }: MaterialRowProps) {
   const bp = bpMap[typeId];
   const expanded = expandedIds.has(typeId);
   const { me = 0, te = 0, systemName = "", stationType = "", structureType = "", meRigTier = "", teRigTier = "", facilityMe = 0, facilityTe = 0 } = bpSettings[typeId] ?? {};
   const runs = bp ? Math.ceil(quantity / bp.outputQty) : 0;
   const adjustedTime = bp ? Math.round(bp.time * (1 - te / 100) * (1 - facilityTe / 100)) : 0;
+  const inStock = stockpileByTypeId[typeId] ?? 0;
+  const covered = inStock >= quantity;
+  const partial = inStock > 0 && !covered;
 
   return (
     <div>
@@ -113,9 +130,19 @@ export function MaterialRow({ typeId, name, quantity, bpMap, depth, expandedIds,
               {formatDuration(adjustedTime * runs)}
             </span>
           )}
-          <span className="text-xs tabular-nums text-right" style={{ color: "var(--foreground)", minWidth: "14ch" }}>
-            {quantity.toLocaleString()}
-          </span>
+          <div className="flex flex-col items-end" style={{ minWidth: "14ch" }}>
+            <span
+              className="text-xs tabular-nums"
+              style={{ color: covered ? "var(--accent)" : partial ? "#f59e0b" : "var(--foreground)" }}
+            >
+              {quantity.toLocaleString()}
+            </span>
+            {inStock > 0 && (
+              <span className="text-xs tabular-nums" style={{ color: covered ? "var(--accent)" : "#f59e0b", opacity: 0.7 }}>
+                have {inStock.toLocaleString()}
+              </span>
+            )}
+          </div>
         </div>
       </div>
 
@@ -133,6 +160,7 @@ export function MaterialRow({ typeId, name, quantity, bpMap, depth, expandedIds,
           bpSettings={bpSettings}
           onBpSettingsChange={onBpSettingsChange}
           onFacilityChange={onFacilityChange}
+          stockpileByTypeId={stockpileByTypeId}
         />
       ))}
     </div>
@@ -153,14 +181,29 @@ interface Props {
   bpSettings: BpSettings;
   onBpSettingsChange: (typeId: number, me: number, te: number) => void;
   onFacilityChange: (typeId: number, value: FacilityValue) => void;
+  stockpileByTypeId: Record<number, number>;
 }
 
-export default function PlanItemCard({ itemId, planId, typeId, typeName, isShip, initialRuns, bp, bpMap, expandedIds, onToggle, bpSettings, onBpSettingsChange, onFacilityChange }: Props) {
+export default function PlanItemCard({ itemId, planId, typeId, typeName, isShip, initialRuns, bp, bpMap, expandedIds, onToggle, bpSettings, onBpSettingsChange, onFacilityChange, stockpileByTypeId }: Props) {
   const [runs, setRuns] = useState(initialRuns);
   const [collapsed, setCollapsed] = useState(false);
   const [, startTransition] = useTransition();
   const { me = 0, te = 0, systemName = "", stationType = "", structureType = "", meRigTier = "", teRigTier = "", facilityMe = 0, facilityTe = 0 } = bpSettings[typeId] ?? {};
   const adjustedTime = bp ? Math.round(bp.time * (1 - te / 100) * (1 - facilityTe / 100)) : 0;
+
+  // Stockpile progress: fraction of total material volume covered
+  const stockpileProgress = (() => {
+    if (!bp || bp.materials.length === 0) return null;
+    let totalNeeded = 0;
+    let totalCovered = 0;
+    for (const mat of bp.materials) {
+      const needed = adjustedMatQty(mat.quantity, me, facilityMe) * runs;
+      const have = stockpileByTypeId[mat.typeId] ?? 0;
+      totalNeeded += needed;
+      totalCovered += Math.min(have, needed);
+    }
+    return totalNeeded > 0 ? totalCovered / totalNeeded : null;
+  })();
 
   function handleRunsChange(newRuns: number) {
     setRuns(newRuns);
@@ -178,36 +221,41 @@ export default function PlanItemCard({ itemId, planId, typeId, typeName, isShip,
     >
       {collapsed ? (
         /* Collapsed: single compact row */
-        <div className="flex items-center gap-2 px-3 py-1.5">
-          <button
-            onClick={() => setCollapsed(false)}
-            className="flex items-center justify-center w-4 h-4 rounded text-xs shrink-0 cursor-pointer transition-opacity hover:opacity-70"
-            style={{ border: "1px solid var(--border)", color: "var(--muted-fg)" }}
-          >
-            +
-          </button>
-          <Image
-            src={`https://images.evetech.net/types/${typeId}/${isShip ? "render" : "icon"}`}
-            alt={typeName}
-            width={24}
-            height={24}
-            className="rounded shrink-0"
-          />
-          <span className="text-xs flex-1 truncate" style={{ color: "var(--foreground)" }}>{typeName}</span>
-          {bp && (
-            <span className="text-xs tabular-nums shrink-0" style={{ color: "var(--muted-fg)" }}>
-              {runs} {runs === 1 ? "run" : "runs"}{adjustedTime > 0 ? ` · ${formatDuration(adjustedTime * runs)}` : ""}
-            </span>
-          )}
-          <form action={removePlanItem.bind(null, planId, itemId)}>
+        <div className="flex flex-col">
+          <div className="flex items-center gap-2 px-3 py-1.5">
             <button
-              type="submit"
-              className="text-xs uppercase tracking-widest px-2 py-0.5 rounded border cursor-pointer transition-opacity hover:opacity-70"
-              style={{ borderColor: "var(--border)", color: "var(--muted-fg)" }}
+              onClick={() => setCollapsed(false)}
+              className="flex items-center justify-center w-4 h-4 rounded text-xs shrink-0 cursor-pointer transition-opacity hover:opacity-70"
+              style={{ border: "1px solid var(--border)", color: "var(--muted-fg)" }}
             >
-              Remove
+              +
             </button>
-          </form>
+            <Image
+              src={`https://images.evetech.net/types/${typeId}/${isShip ? "render" : "icon"}`}
+              alt={typeName}
+              width={24}
+              height={24}
+              className="rounded shrink-0"
+            />
+            <span className="text-xs flex-1 truncate" style={{ color: "var(--foreground)" }}>{typeName}</span>
+            {bp && (
+              <span className="text-xs tabular-nums shrink-0" style={{ color: "var(--muted-fg)" }}>
+                {runs} {runs === 1 ? "run" : "runs"}{adjustedTime > 0 ? ` · ${formatDuration(adjustedTime * runs)}` : ""}
+              </span>
+            )}
+            <form action={removePlanItem.bind(null, planId, itemId)}>
+              <button
+                type="submit"
+                className="text-xs uppercase tracking-widest px-2 py-0.5 rounded border cursor-pointer transition-opacity hover:opacity-70"
+                style={{ borderColor: "var(--border)", color: "var(--muted-fg)" }}
+              >
+                Remove
+              </button>
+            </form>
+          </div>
+          {stockpileProgress !== null && (
+            <ProgressBar progress={stockpileProgress} />
+          )}
         </div>
       ) : (
         /* Expanded: full header */
@@ -290,6 +338,11 @@ export default function PlanItemCard({ itemId, planId, typeId, typeName, isShip,
         </div>
       )}
 
+      {/* Progress bar (expanded view) */}
+      {!collapsed && stockpileProgress !== null && (
+        <ProgressBar progress={stockpileProgress} />
+      )}
+
       {/* Materials */}
       {!collapsed && bp && bp.materials.length > 0 && (
         <div style={{ borderTop: "1px solid var(--border)" }}>
@@ -306,6 +359,7 @@ export default function PlanItemCard({ itemId, planId, typeId, typeName, isShip,
               bpSettings={bpSettings}
               onBpSettingsChange={onBpSettingsChange}
               onFacilityChange={onFacilityChange}
+              stockpileByTypeId={stockpileByTypeId}
             />
           ))}
         </div>
