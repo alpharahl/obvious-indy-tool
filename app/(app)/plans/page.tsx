@@ -6,7 +6,7 @@ import { prisma } from "../../../lib/prisma";
 import { getOrCreateDefaultPlan } from "../../actions/build-plans";
 import AddItemButton from "../../components/AddItemButton";
 import PlanBody from "../../components/PlanBody";
-import { type BpMap, type Decisions } from "../../components/PlanItemCard";
+import { type BpMap, type Decisions, type BpSettings } from "../../components/PlanItemCard";
 
 const MAX_DEPTH = 4;
 
@@ -37,8 +37,12 @@ export default async function PlansPage() {
   // Load saved decisions
   const decisionRows = await prisma.buildPlanDecision.findMany({ where: { planId: plan.id } });
   const decisions: Decisions = {};
+  const initialBpSettings: BpSettings = {};
   for (const d of decisionRows) {
     decisions[d.typeId] = d.decision as "build" | "buy";
+    if (d.me > 0 || d.te > 0) {
+      initialBpSettings[d.typeId] = { me: d.me, te: d.te };
+    }
   }
 
   // Build full bpMap iteratively up to MAX_DEPTH
@@ -58,6 +62,7 @@ export default async function PlansPage() {
       for (const prod of act.products) {
         bpMap[prod.typeId] = {
           outputQty: prod.quantity,
+          time: act.time,
           activity: act.activity as "MANUFACTURING" | "REACTION",
           materials: act.materials.map((m) => ({ typeId: m.typeId, name: m.type.name, quantity: m.quantity })),
         };
@@ -87,6 +92,7 @@ export default async function PlansPage() {
           items={plan.items}
           bpMap={bpMap}
           initialDecisions={decisions}
+          initialBpSettings={initialBpSettings}
         />
       )}
     </main>

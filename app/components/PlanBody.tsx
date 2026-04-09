@@ -1,14 +1,14 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { setPlanDecision, setBulkDecisions } from "../actions/build-plans";
-import PlanItemCard, { type BpMap, type Decisions } from "./PlanItemCard";
+import { setPlanDecision, setBulkDecisions, setBpEfficiency } from "../actions/build-plans";
+import PlanItemCard, { type BpMap, type Decisions, type BpSettings } from "./PlanItemCard";
 
 interface PlanItem {
   id: string;
   typeId: number;
   quantity: number;
-  type: { name: string };
+  type: { name: string; group: { categoryId: number } };
 }
 
 interface Props {
@@ -16,9 +16,10 @@ interface Props {
   items: PlanItem[];
   bpMap: BpMap;
   initialDecisions: Decisions;
+  initialBpSettings: BpSettings;
 }
 
-export default function PlanBody({ planId, items, bpMap, initialDecisions }: Props) {
+export default function PlanBody({ planId, items, bpMap, initialDecisions, initialBpSettings }: Props) {
   const [expandedIds, setExpandedIds] = useState<Set<number>>(
     () => new Set(
       Object.entries(initialDecisions)
@@ -26,6 +27,7 @@ export default function PlanBody({ planId, items, bpMap, initialDecisions }: Pro
         .map(([k]) => Number(k))
     )
   );
+  const [bpSettings, setBpSettings] = useState<BpSettings>(initialBpSettings);
   const [, startTransition] = useTransition();
 
   function toggle(typeId: number) {
@@ -38,6 +40,13 @@ export default function PlanBody({ planId, items, bpMap, initialDecisions }: Pro
     });
     startTransition(async () => {
       await setPlanDecision(planId, typeId, expanding ? "build" : "buy");
+    });
+  }
+
+  function handleBpSettingsChange(typeId: number, me: number, te: number) {
+    setBpSettings((prev) => ({ ...prev, [typeId]: { me, te } }));
+    startTransition(async () => {
+      await setBpEfficiency(planId, typeId, me, te);
     });
   }
 
@@ -87,6 +96,7 @@ export default function PlanBody({ planId, items, bpMap, initialDecisions }: Pro
         {items.map((item) => {
           const bp = bpMap[item.typeId] ?? null;
           const initialRuns = bp ? Math.ceil(item.quantity / bp.outputQty) : 1;
+          const isShip = item.type.group.categoryId === 6;
           return (
             <PlanItemCard
               key={item.id}
@@ -94,11 +104,14 @@ export default function PlanBody({ planId, items, bpMap, initialDecisions }: Pro
               planId={planId}
               typeId={item.typeId}
               typeName={item.type.name}
+              isShip={isShip}
               initialRuns={initialRuns}
               bp={bp}
               bpMap={bpMap}
               expandedIds={expandedIds}
               onToggle={toggle}
+              bpSettings={bpSettings}
+              onBpSettingsChange={handleBpSettingsChange}
             />
           );
         })}

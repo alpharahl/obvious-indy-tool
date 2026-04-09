@@ -37,7 +37,7 @@ export async function getOrCreateDefaultPlan() {
     orderBy: { updatedAt: "desc" },
     include: {
       items: {
-        include: { type: { select: { name: true } } },
+        include: { type: { select: { name: true, group: { select: { categoryId: true } } } } },
         orderBy: { type: { name: "asc" } },
       },
     },
@@ -45,7 +45,7 @@ export async function getOrCreateDefaultPlan() {
   if (!plan) {
     plan = await prisma.buildPlan.create({
       data: { userId, name: "My Plan" },
-      include: { items: { include: { type: { select: { name: true } } } } },
+      include: { items: { include: { type: { select: { name: true, group: { select: { categoryId: true } } } } } } },
     });
   }
   return plan;
@@ -101,6 +101,19 @@ export async function setPlanDecision(planId: string, typeId: number, decision: 
       create: { planId, typeId, decision },
     });
   }
+  revalidatePath("/plans");
+}
+
+export async function setBpEfficiency(planId: string, typeId: number, me: number, te: number) {
+  const userId = await requireUserId();
+  const plan = await prisma.buildPlan.findFirst({ where: { id: planId, userId } });
+  if (!plan) throw new Error("Plan not found");
+
+  await prisma.buildPlanDecision.upsert({
+    where: { planId_typeId: { planId, typeId } },
+    update: { me, te },
+    create: { planId, typeId, decision: "build", me, te },
+  });
   revalidatePath("/plans");
 }
 
