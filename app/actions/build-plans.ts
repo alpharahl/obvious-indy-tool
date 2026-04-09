@@ -30,6 +30,27 @@ export async function deletePlan(planId: string) {
   redirect("/plans");
 }
 
+export async function getOrCreateDefaultPlan() {
+  const userId = await requireUserId();
+  let plan = await prisma.buildPlan.findFirst({
+    where: { userId },
+    orderBy: { updatedAt: "desc" },
+    include: {
+      items: {
+        include: { type: { select: { name: true } } },
+        orderBy: { type: { name: "asc" } },
+      },
+    },
+  });
+  if (!plan) {
+    plan = await prisma.buildPlan.create({
+      data: { userId, name: "My Plan" },
+      include: { items: { include: { type: { select: { name: true } } } } },
+    });
+  }
+  return plan;
+}
+
 export async function addPlanItem(planId: string, typeId: number, quantity: number) {
   const userId = await requireUserId();
   // Verify plan belongs to user
@@ -41,7 +62,7 @@ export async function addPlanItem(planId: string, typeId: number, quantity: numb
     update: { quantity },
     create: { planId, typeId, quantity },
   });
-  revalidatePath(`/plans/${planId}`);
+  revalidatePath("/plans");
 }
 
 export async function updateItemCompletion(planId: string, itemId: string, completedQuantity: number) {
@@ -63,7 +84,7 @@ export async function removePlanItem(planId: string, itemId: string) {
   if (!plan) throw new Error("Plan not found");
 
   await prisma.buildPlanItem.delete({ where: { id: itemId } });
-  revalidatePath(`/plans/${planId}`);
+  revalidatePath("/plans");
 }
 
 export async function setPlanDecision(planId: string, typeId: number, decision: "buy" | "build" | "gather") {
@@ -81,7 +102,7 @@ export async function setPlanDecision(planId: string, typeId: number, decision: 
       create: { planId, typeId, decision },
     });
   }
-  revalidatePath(`/plans/${planId}`);
+  revalidatePath("/plans");
 }
 
 export async function setPlanAllocation(planId: string, typeId: number, quantity: number) {
