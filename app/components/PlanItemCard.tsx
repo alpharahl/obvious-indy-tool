@@ -1,10 +1,8 @@
 "use client";
 
-import { useState, useTransition } from "react";
-import { setPlanDecision } from "../actions/build-plans";
-
 export interface BpEntry {
   outputQty: number;
+  activity: "MANUFACTURING" | "REACTION";
   materials: { typeId: number; name: string; quantity: number }[];
 }
 
@@ -17,23 +15,14 @@ interface MaterialRowProps {
   quantity: number;
   bpMap: BpMap;
   depth: number;
-  planId: string;
-  decisions: Decisions;
+  expandedIds: Set<number>;
+  onToggle: (typeId: number) => void;
 }
 
-function MaterialRow({ typeId, name, quantity, bpMap, depth, planId, decisions }: MaterialRowProps) {
+export function MaterialRow({ typeId, name, quantity, bpMap, depth, expandedIds, onToggle }: MaterialRowProps) {
   const bp = bpMap[typeId];
-  const [expanded, setExpanded] = useState(() => decisions[typeId] === "build");
-  const [, startTransition] = useTransition();
+  const expanded = expandedIds.has(typeId);
   const runs = bp ? Math.ceil(quantity / bp.outputQty) : 0;
-
-  function toggle() {
-    const next = !expanded;
-    setExpanded(next);
-    startTransition(async () => {
-      await setPlanDecision(planId, typeId, next ? "build" : "buy");
-    });
-  }
 
   return (
     <div>
@@ -44,7 +33,7 @@ function MaterialRow({ typeId, name, quantity, bpMap, depth, planId, decisions }
         <div className="flex items-center gap-2 min-w-0">
           {bp ? (
             <button
-              onClick={toggle}
+              onClick={() => onToggle(typeId)}
               className="flex items-center justify-center w-4 h-4 rounded text-xs shrink-0 cursor-pointer transition-opacity hover:opacity-70"
               style={{ border: "1px solid var(--border)", color: "var(--muted-fg)" }}
             >
@@ -70,8 +59,8 @@ function MaterialRow({ typeId, name, quantity, bpMap, depth, planId, decisions }
           quantity={mat.quantity * runs}
           bpMap={bpMap}
           depth={depth + 1}
-          planId={planId}
-          decisions={decisions}
+          expandedIds={expandedIds}
+          onToggle={onToggle}
         />
       ))}
     </div>
@@ -85,11 +74,12 @@ interface Props {
   quantity: number;
   bp: BpEntry | null;
   bpMap: BpMap;
-  decisions: Decisions;
+  expandedIds: Set<number>;
+  onToggle: (typeId: number) => void;
   onRemove: (planId: string, itemId: string) => Promise<void>;
 }
 
-export default function PlanItemCard({ itemId, planId, typeName, quantity, bp, bpMap, decisions, onRemove }: Props) {
+export default function PlanItemCard({ itemId, planId, typeName, quantity, bp, bpMap, expandedIds, onToggle, onRemove }: Props) {
   const runs = bp ? Math.ceil(quantity / bp.outputQty) : 0;
 
   return (
@@ -97,7 +87,6 @@ export default function PlanItemCard({ itemId, planId, typeName, quantity, bp, b
       className="flex flex-col rounded border overflow-hidden"
       style={{ background: "var(--panel)", borderColor: "var(--border)" }}
     >
-      {/* Header */}
       <div className="flex items-center justify-between px-4 py-3">
         <div className="flex items-center gap-3">
           <span className="text-sm" style={{ color: "var(--foreground)" }}>{typeName}</span>
@@ -119,7 +108,6 @@ export default function PlanItemCard({ itemId, planId, typeName, quantity, bp, b
         </form>
       </div>
 
-      {/* L1 materials */}
       {bp && bp.materials.length > 0 && (
         <div style={{ borderTop: "1px solid var(--border)" }}>
           {bp.materials.map((mat) => (
@@ -130,8 +118,8 @@ export default function PlanItemCard({ itemId, planId, typeName, quantity, bp, b
               quantity={mat.quantity * runs}
               bpMap={bpMap}
               depth={0}
-              planId={planId}
-              decisions={decisions}
+              expandedIds={expandedIds}
+              onToggle={onToggle}
             />
           ))}
         </div>

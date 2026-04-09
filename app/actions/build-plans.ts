@@ -93,7 +93,6 @@ export async function setPlanDecision(planId: string, typeId: number, decision: 
   if (!plan) throw new Error("Plan not found");
 
   if (decision === "buy") {
-    // Remove decision entirely — "buy" is the default, no need to store it
     await prisma.buildPlanDecision.deleteMany({ where: { planId, typeId } });
   } else {
     await prisma.buildPlanDecision.upsert({
@@ -101,6 +100,27 @@ export async function setPlanDecision(planId: string, typeId: number, decision: 
       update: { decision },
       create: { planId, typeId, decision },
     });
+  }
+  revalidatePath("/plans");
+}
+
+export async function setBulkDecisions(planId: string, typeIds: number[], decision: "buy" | "build") {
+  const userId = await requireUserId();
+  const plan = await prisma.buildPlan.findFirst({ where: { id: planId, userId } });
+  if (!plan) throw new Error("Plan not found");
+
+  if (decision === "buy") {
+    await prisma.buildPlanDecision.deleteMany({ where: { planId, typeId: { in: typeIds } } });
+  } else {
+    await prisma.$transaction(
+      typeIds.map((typeId) =>
+        prisma.buildPlanDecision.upsert({
+          where: { planId_typeId: { planId, typeId } },
+          update: { decision },
+          create: { planId, typeId, decision },
+        }),
+      ),
+    );
   }
   revalidatePath("/plans");
 }

@@ -3,9 +3,10 @@ export const dynamic = "force-dynamic";
 import { redirect } from "next/navigation";
 import { auth } from "../../../auth";
 import { prisma } from "../../../lib/prisma";
-import { getOrCreateDefaultPlan, removePlanItem } from "../../actions/build-plans";
+import { getOrCreateDefaultPlan } from "../../actions/build-plans";
 import AddItemButton from "../../components/AddItemButton";
-import PlanItemCard, { type BpMap, type Decisions } from "../../components/PlanItemCard";
+import PlanBody from "../../components/PlanBody";
+import { type BpMap, type Decisions } from "../../components/PlanItemCard";
 
 const MAX_DEPTH = 4;
 
@@ -57,6 +58,7 @@ export default async function PlansPage() {
       for (const prod of act.products) {
         bpMap[prod.typeId] = {
           outputQty: prod.quantity,
+          activity: act.activity as "MANUFACTURING" | "REACTION",
           materials: act.materials.map((m) => ({ typeId: m.typeId, name: m.type.name, quantity: m.quantity })),
         };
         nextFrontier.push(...act.materials.map((m) => m.typeId));
@@ -80,21 +82,12 @@ export default async function PlansPage() {
           No items yet — add one above
         </p>
       ) : (
-        <div className="flex flex-col gap-3">
-          {plan.items.map((item) => (
-            <PlanItemCard
-              key={item.id}
-              itemId={item.id}
-              planId={plan.id}
-              typeName={item.type.name}
-              quantity={item.quantity}
-              bp={bpMap[item.typeId] ?? null}
-              bpMap={bpMap}
-              decisions={decisions}
-              onRemove={removePlanItem}
-            />
-          ))}
-        </div>
+        <PlanBody
+          planId={plan.id}
+          items={plan.items}
+          bpMap={bpMap}
+          initialDecisions={decisions}
+        />
       )}
     </main>
   );
