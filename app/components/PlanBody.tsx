@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { setPlanDecision, setBulkDecisions, removePlanItem } from "../actions/build-plans";
+import { setPlanDecision, setBulkDecisions } from "../actions/build-plans";
 import PlanItemCard, { type BpMap, type Decisions } from "./PlanItemCard";
 
 interface PlanItem {
@@ -84,20 +84,24 @@ export default function PlanBody({ planId, items, bpMap, initialDecisions }: Pro
       </div>
 
       <div className="flex flex-col gap-3">
-        {items.map((item) => (
-          <PlanItemCard
-            key={item.id}
-            itemId={item.id}
-            planId={planId}
-            typeName={item.type.name}
-            quantity={item.quantity}
-            bp={bpMap[item.typeId] ?? null}
-            bpMap={bpMap}
-            expandedIds={expandedIds}
-            onToggle={toggle}
-            onRemove={removePlanItem}
-          />
-        ))}
+        {items.map((item) => {
+          const bp = bpMap[item.typeId] ?? null;
+          const initialRuns = bp ? Math.ceil(item.quantity / bp.outputQty) : 1;
+          return (
+            <PlanItemCard
+              key={item.id}
+              itemId={item.id}
+              planId={planId}
+              typeId={item.typeId}
+              typeName={item.type.name}
+              initialRuns={initialRuns}
+              bp={bp}
+              bpMap={bpMap}
+              expandedIds={expandedIds}
+              onToggle={toggle}
+            />
+          );
+        })}
       </div>
     </div>
   );

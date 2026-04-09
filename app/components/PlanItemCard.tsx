@@ -1,5 +1,9 @@
 "use client";
 
+import { useState, useTransition } from "react";
+import { addPlanItem, removePlanItem } from "../actions/build-plans";
+import NumberInput from "./NumberInput";
+
 export interface BpEntry {
   outputQty: number;
   activity: "MANUFACTURING" | "REACTION";
@@ -70,17 +74,27 @@ export function MaterialRow({ typeId, name, quantity, bpMap, depth, expandedIds,
 interface Props {
   itemId: string;
   planId: string;
+  typeId: number;
   typeName: string;
-  quantity: number;
+  initialRuns: number;
   bp: BpEntry | null;
   bpMap: BpMap;
   expandedIds: Set<number>;
   onToggle: (typeId: number) => void;
-  onRemove: (planId: string, itemId: string) => Promise<void>;
 }
 
-export default function PlanItemCard({ itemId, planId, typeName, quantity, bp, bpMap, expandedIds, onToggle, onRemove }: Props) {
-  const runs = bp ? Math.ceil(quantity / bp.outputQty) : 0;
+export default function PlanItemCard({ itemId, planId, typeId, typeName, initialRuns, bp, bpMap, expandedIds, onToggle }: Props) {
+  const [runs, setRuns] = useState(initialRuns);
+  const [, startTransition] = useTransition();
+
+  function handleRunsChange(newRuns: number) {
+    setRuns(newRuns);
+    if (bp) {
+      startTransition(async () => {
+        await addPlanItem(planId, typeId, newRuns * bp.outputQty);
+      });
+    }
+  }
 
   return (
     <div
@@ -90,14 +104,24 @@ export default function PlanItemCard({ itemId, planId, typeName, quantity, bp, b
       <div className="flex items-center justify-between px-4 py-3">
         <div className="flex items-center gap-3">
           <span className="text-sm" style={{ color: "var(--foreground)" }}>{typeName}</span>
-          <span className="text-xs tabular-nums" style={{ color: "var(--muted-fg)" }}>×{quantity}</span>
-          {bp && (
-            <span className="text-xs" style={{ color: "var(--muted-fg)" }}>
-              {runs} {runs === 1 ? "run" : "runs"}
-            </span>
+          {bp ? (
+            <div className="flex items-center gap-1.5">
+              <NumberInput
+                value={runs}
+                onChange={handleRunsChange}
+                min={1}
+                className="w-16 text-xs px-2 py-0.5 rounded border bg-transparent outline-none tabular-nums text-center"
+                style={{ borderColor: "var(--border)", color: "var(--foreground)" }}
+              />
+              <span className="text-xs" style={{ color: "var(--muted-fg)" }}>
+                {runs === 1 ? "run" : "runs"}
+              </span>
+            </div>
+          ) : (
+            <span className="text-xs" style={{ color: "var(--muted-fg)" }}>no blueprint</span>
           )}
         </div>
-        <form action={onRemove.bind(null, planId, itemId)}>
+        <form action={removePlanItem.bind(null, planId, itemId)}>
           <button
             type="submit"
             className="text-xs uppercase tracking-widest px-3 py-1 rounded border cursor-pointer transition-opacity hover:opacity-70"
