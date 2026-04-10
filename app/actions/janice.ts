@@ -1,64 +1,56 @@
 "use server";
 
-export interface JaniceItem {
+export interface PriceItem {
+  typeId: number;
   name: string;
   quantity: number;
-  unitBuyPrice: number;
-  unitSellPrice: number;
-  totalBuyPrice: number;
-  totalSellPrice: number;
+  unitBuy: number;
+  unitSell: number;
+  totalBuy: number;
+  totalSell: number;
 }
 
-export interface JaniceResult {
-  items: JaniceItem[];
-  totalBuyPrice: number;
-  totalSellPrice: number;
+export interface PriceResult {
+  items: PriceItem[];
+  totalBuy: number;
+  totalSell: number;
 }
 
-export async function fetchJanicePrices(
-  items: { name: string; quantity: number }[],
-): Promise<JaniceResult> {
-  const apiKey = process.env.JANICE_API_KEY;
-  if (!apiKey) throw new Error("JANICE_API_KEY is not configured");
+export async function fetchPrices(
+  items: { typeId: number; name: string; quantity: number }[],
+): Promise<PriceResult> {
+  if (items.length === 0) return { items: [], totalBuy: 0, totalSell: 0 };
 
-  // Format as EVE paste text: "Name\tQuantity" per line
-  const body = items.map((i) => `${i.name}\t${i.quantity}`).join("\n");
-
+  const typeIds = items.map((i) => i.typeId).join(",");
   const res = await fetch(
-    "https://janice.e-351.com/api/rest/appraisal/v2?market=2&persist=false&compactize=true&pricePercentage=1",
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "text/plain",
-        "X-ApiKey": apiKey,
-      },
-      body,
-    },
+    `https://market.fuzzwork.co.uk/aggregates/?region=10000002&types=${typeIds}`,
+    { next: { revalidate: 300 } }, // cache for 5 min
   );
 
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`Janice API error ${res.status}: ${text || res.statusText}`);
-  }
+  if (!res.ok) throw new Error(`Fuzzwork API error ${res.status}`);
 
-  const data = await res.json();
+  const data: Record<string, {
+    buy: { percentile: string };
+    sell: { percentile: string };
+  }> = await res.json();
 
-  // Map response — Janice v2 returns { items: [...], totalBuyPrice, totalSellPrice }
-  const mapped: JaniceItem[] = (data.items ?? []).map((it: Record<string, unknown>) => {
-    const itemType = it.itemType as Record<string, unknown> | undefined;
-    return {
-      name: (itemType?.name as string) ?? String(itemType?.eid ?? "Unknown"),
-      quantity: Number(it.amount ?? 0),
-      unitBuyPrice: Number(it.unitBuyPrice ?? 0),
-      unitSellPrice: Number(it.unitSellPrice ?? 0),
-      totalBuyPrice: Number(it.totalBuyPrice ?? 0),
-      totalSellPrice: Number(it.totalSellPrice ?? 0),
-    };
+  let totalBuy = 0;
+  let totalSell = 0;
+
+  const priceItems: PriceItem[] = items.map((item) => {
+    const row = data[String(item.typeId)];
+    const unitBuy = row ? parseFloat(row.buy.percentile) : 0;
+    const unitSell = row ? parseFloat(row.sell.percentile) : 0;
+    const tb = unitBuy * item.quantity;
+    const ts = unitSell * item.quantity;
+    totalBuy += tb;
+    totalSell += ts;
+    return { ...item, unitBuy, unitSell, totalBuy: tb, totalSell: ts };
   });
 
   return {
-    items: mapped.sort((a, b) => a.name.localeCompare(b.name)),
-    totalBuyPrice: Number(data.totalBuyPrice ?? 0),
-    totalSellPrice: Number(data.totalSellPrice ?? 0),
+    items: priceItems.sort((a, b) => a.name.localeCompare(b.name)),
+    totalBuy,
+    totalSell,
   };
 }

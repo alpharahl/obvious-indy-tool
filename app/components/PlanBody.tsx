@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { setPlanDecision, setBulkDecisions, setBpEfficiency, setItemFacility, setBulkItemFacility } from "../actions/build-plans";
-import { fetchJanicePrices, type JaniceResult } from "../actions/janice";
+import { fetchPrices, type PriceResult } from "../actions/janice";
 import { type FacilityValue } from "./StationPicker";
 import PlanItemCard, { type BpMap, type Decisions, type BpSettings } from "./PlanItemCard";
 
@@ -92,7 +92,8 @@ export default function PlanBody({ planId, items, bpMap, initialDecisions, initi
   const [pendingApply, setPendingApply] = useState<PendingApply | null>(null);
   const [showShoppingList, setShowShoppingList] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [prices, setPrices] = useState<JaniceResult | null>(null);
+  const [copiedBuyOrders, setCopiedBuyOrders] = useState(false);
+  const [prices, setPrices] = useState<PriceResult | null>(null);
   const [priceError, setPriceError] = useState<string | null>(null);
   const [loadingPrices, startPriceTransition] = useTransition();
   const [, startTransition] = useTransition();
@@ -171,12 +172,25 @@ export default function PlanBody({ planId, items, bpMap, initialDecisions, initi
     });
   }
 
-  function handleGetPrices(list: { name: string; needed: number }[]) {
+  function handleCopyBuyOrders(list: { name: string; needed: number }[]) {
+    if (!prices) return;
+    const lines = list.map((r) => {
+      const priceRow = prices.items.find((p) => p.name === r.name);
+      const bid = priceRow ? formatBid(nextBuyPrice(priceRow.unitBuy)) : "";
+      return `${r.name}\t${r.needed.toLocaleString()}\t${bid}`;
+    });
+    navigator.clipboard.writeText(lines.join("\n")).then(() => {
+      setCopiedBuyOrders(true);
+      setTimeout(() => setCopiedBuyOrders(false), 2000);
+    });
+  }
+
+  function handleGetPrices(list: { typeId: number; name: string; needed: number }[]) {
     setPrices(null);
     setPriceError(null);
     startPriceTransition(async () => {
       try {
-        const result = await fetchJanicePrices(list.map((r) => ({ name: r.name, quantity: r.needed })));
+        const result = await fetchPrices(list.map((r) => ({ typeId: r.typeId, name: r.name, quantity: r.needed })));
         setPrices(result);
       } catch (e) {
         setPriceError(e instanceof Error ? e.message : "Failed to fetch prices");
@@ -189,6 +203,23 @@ export default function PlanBody({ planId, items, bpMap, initialDecisions, initi
     if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(2)}m`;
     if (v >= 1_000) return `${(v / 1_000).toFixed(1)}k`;
     return v.toLocaleString();
+  }
+
+  // Returns the smallest 4-significant-figure price strictly above unitBuy.
+  // EVE buy orders are capped at 4 sig figs; this gives the minimum competitive outbid.
+  function nextBuyPrice(unitBuy: number): number {
+    if (unitBuy <= 0) return 0.01;
+    const mag = Math.floor(Math.log10(unitBuy));
+    const unit = Math.max(Math.pow(10, mag - 3), 0.01);
+    // floor with epsilon handles exact multiples without floating-point drift
+    const n = Math.floor(unitBuy / unit + 1e-9);
+    return (n + 1) * unit;
+  }
+
+  function formatBid(v: number): string {
+    const mag = Math.floor(Math.log10(Math.max(v, 0.01)));
+    const decimals = Math.min(2, Math.max(0, 3 - mag));
+    return v.toFixed(decimals);
   }
 
   const allBpsExpanded = Object.entries(bpMap).filter(([, v]) => v.activity === "MANUFACTURING").every(([k]) => expandedIds.has(Number(k)));
@@ -283,7 +314,7 @@ export default function PlanBody({ planId, items, bpMap, initialDecisions, initi
           onMouseDown={(e) => { if (e.target === e.currentTarget) { setShowShoppingList(false); setPrices(null); setPriceError(null); } }}
         >
           <div
-            className="flex flex-col w-full max-w-lg rounded border overflow-hidden"
+            className="flex flex-col w-full max-w-2xl rounded border overflow-hidden"
             style={{ background: "var(--panel)", borderColor: "var(--border)", maxHeight: "80vh" }}
           >
             {/* Header */}
@@ -303,6 +334,15 @@ export default function PlanBody({ planId, items, bpMap, initialDecisions, initi
                     style={{ borderColor: prices ? "var(--accent)" : "var(--border)", color: prices ? "var(--accent)" : "var(--muted-fg)" }}
                   >
                     {loadingPrices ? "Loading…" : "Prices"}
+                  </button>
+                )}
+                {prices && shoppingList.length > 0 && (
+                  <button
+                    onClick={() => handleCopyBuyOrders(shoppingList)}
+                    className="text-xs uppercase tracking-widest px-3 py-1 rounded border cursor-pointer transition-opacity hover:opacity-70"
+                    style={{ borderColor: copiedBuyOrders ? "var(--accent)" : "var(--border)", color: copiedBuyOrders ? "var(--accent)" : "var(--muted-fg)" }}
+                  >
+                    {copiedBuyOrders ? "Copied!" : "Buy Orders"}
                   </button>
                 )}
                 <button
@@ -345,6 +385,7 @@ export default function PlanBody({ planId, items, bpMap, initialDecisions, initi
                     >
                       <span className="flex-1">Item</span>
                       <span className="w-20 text-right tabular-nums">Qty</span>
+                      <span className="w-28 text-right tabular-nums">Bid/unit</span>
                       <span className="w-24 text-right tabular-nums">Buy</span>
                       <span className="w-24 text-right tabular-nums">Sell</span>
                     </div>
@@ -363,11 +404,14 @@ export default function PlanBody({ planId, items, bpMap, initialDecisions, initi
                         </span>
                         {prices && (
                           <>
+                            <span className="w-28 text-right tabular-nums shrink-0" style={{ color: "#f59e0b" }}>
+                              {priceRow ? formatBid(nextBuyPrice(priceRow.unitBuy)) : "—"}
+                            </span>
                             <span className="w-24 text-right tabular-nums shrink-0" style={{ color: "var(--foreground)" }}>
-                              {priceRow ? formatIsk(priceRow.totalBuyPrice) : "—"}
+                              {priceRow ? formatIsk(priceRow.totalBuy) : "—"}
                             </span>
                             <span className="w-24 text-right tabular-nums shrink-0" style={{ color: "var(--accent)" }}>
-                              {priceRow ? formatIsk(priceRow.totalSellPrice) : "—"}
+                              {priceRow ? formatIsk(priceRow.totalSell) : "—"}
                             </span>
                           </>
                         )}
@@ -384,8 +428,8 @@ export default function PlanBody({ planId, items, bpMap, initialDecisions, initi
                 className="flex items-center justify-end gap-6 px-4 py-2 text-xs shrink-0"
                 style={{ borderTop: "1px solid var(--border)", color: "var(--muted-fg)" }}
               >
-                <span>Total buy <span className="tabular-nums" style={{ color: "var(--foreground)" }}>{formatIsk(prices.totalBuyPrice)} ISK</span></span>
-                <span>Total sell <span className="tabular-nums" style={{ color: "var(--accent)" }}>{formatIsk(prices.totalSellPrice)} ISK</span></span>
+                <span>Total buy <span className="tabular-nums" style={{ color: "var(--foreground)" }}>{formatIsk(prices.totalBuy)} ISK</span></span>
+                <span>Total sell <span className="tabular-nums" style={{ color: "var(--accent)" }}>{formatIsk(prices.totalSell)} ISK</span></span>
               </div>
             )}
           </div>
